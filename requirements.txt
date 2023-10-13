@@ -1,0 +1,3 @@
+txtai
+simple_term_menu
+pyipv8
