@@ -7,7 +7,7 @@ According to their [paper](https://arxiv.org/pdf/2004.10706.pdf), the embeddings
 
 ## Demo
 
-![Demo](https://user-images.githubusercontent.com/22933507/242871112-09c69e44-db0f-4035-be84-4af59b4aac96.gif)
+![Demo](https://github.com/mg98/p2p-ol2r/assets/22933507/d4713e89-fd80-45bf-ad77-4a2a34a6a4e2)
 
 ## How It Works
 
