@@ -63,7 +63,7 @@ class LTR(LTRModel):
         Returns:
             tuple of (positive training data, negative training data)
         """
-        results = self.results[query]
+        results = self._query_model(query)
         query_vector = self.embed(query)
         pos_train_data, neg_train_data = [], []
         for i, _ in enumerate(results):
@@ -102,7 +102,6 @@ class LTR(LTRModel):
         if query not in self.results: 
             # bootstrap model with semantic search results
             self.results[query] = [x for x, _ in self.embeddings.search(query, 5)]
-            self.train(*self.gen_train_data(query), 100)
 
         return [self.metadata[res] for res in self._query_model(query)]
     
@@ -129,7 +128,7 @@ class LTR(LTRModel):
         Retrains the model with the selected result as the most relevant,
         and updates the local cache of results based on the updated model.
         """
-        self.train(*self.gen_train_data(query, selected_res), 10)
+        self.train(*self.gen_train_data(query, selected_res), 100)
 
         query_vector = self.embed(query)
         results_combs = list(combinations(self.results[query], 2))

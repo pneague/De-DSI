@@ -1,5 +1,6 @@
 import io
 import sys
+import os
 from asyncio import run, sleep
 from dataclasses import dataclass
 import threading
@@ -10,7 +11,7 @@ import time
 from ipv8.community import Community, CommunitySettings
 from ipv8.configuration import ConfigBuilder, Strategy, WalkerDefinition, default_bootstrap_defs
 from ipv8.lazy_community import lazy_wrapper
-from ipv8.messaging.payload_dataclass import overwrite_dataclass, type_from_format
+from ipv8.messaging.payload_dataclass import overwrite_dataclass
 from ipv8.types import Peer
 from ipv8.util import run_forever
 from ipv8_service import IPv8
@@ -24,7 +25,8 @@ dataclass = overwrite_dataclass(dataclass)
 
 @dataclass(msg_id=1)  # The value 1 identifies this message and must be unique per community
 class UpdateModel:
-    id: int
+    id: bytes
+    fragment: int
     total: int
     data: bytes
 
@@ -35,7 +37,6 @@ class LTRCommunity(Community):
     def __init__(self, settings: CommunitySettings) -> None:
         super().__init__(settings)
         self.add_message_handler(UpdateModel, self.on_message)
-        self.lamport_clock = 0
         self.input_queue = queue.Queue()
         self.ready_for_input = threading.Event()
         self.packets: list[UpdateModel] = []
@@ -69,8 +70,9 @@ class LTRCommunity(Community):
                     print('sending update...')
                     model_bf = self.ltr.serialize_model()
                     chunks = utils.split(model_bf, 8192)
+                    _id = os.urandom(16)
                     for i, chunk in enumerate(chunks):
-                        self.ez_send(peer, UpdateModel(i+1, len(chunks), chunk))
+                        self.ez_send(peer, UpdateModel(_id, i+1, len(chunks), chunk))
                         time.sleep(0.01)
                     print('update sent')
 
@@ -80,12 +82,12 @@ class LTRCommunity(Community):
     @lazy_wrapper(UpdateModel)
     def on_message(self, peer: Peer, payload: UpdateModel) -> None:
         self.packets.append(payload)
-
-        if len(self.packets) == payload.total:
+        packets = [x for x in self.packets if x.id == payload.id]
+        if len(packets) == payload.total:
             model_bf = io.BytesIO()
-            for packet in sorted(self.packets, key=lambda x: x.id):
+            for packet in sorted(packets, key=lambda x: x.fragment):
                 model_bf.write(packet.data)
-            self.packets = []
+            self.packets = list(filter(lambda x: x.id != payload.id, self.packets))
             model_bf.seek(0)
             self.ltr.apply_updates(torch.load(model_bf))
             print('model updated')
@@ -99,6 +101,5 @@ async def start_communities() -> None:
     await IPv8(builder.finalize(),
                 extra_communities={'LTRCommunity': LTRCommunity}).start()
     await run_forever()
-
 
 run(start_communities())
