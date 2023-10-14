@@ -69,4 +69,3 @@ class LTRModel:
         for name, param in self.model.named_parameters():
             if name in update_state:
                 param.data = (param.data + update_state[name]) / 2.0
-        #last_state = deepcopy(self.model.state_dict())

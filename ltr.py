@@ -20,7 +20,7 @@ class LTR(LTRModel):
     metadata = {}
     embeddings_map = {}
     embeddings = None
-    results = {'molecular tumor': ['pl37d01q', 'bviip1sp', 'kqb475gu', 'zueoyesj', 'a3qxwyn6']}
+    results = {}
 
     def __init__(self):
         super().__init__()
@@ -106,6 +106,9 @@ class LTR(LTRModel):
         return [self.metadata[res] for res in self._query_model(query)]
     
     def _query_model(self, query: str):
+        """
+        Determine ranking of results in `self.results[query]` based on pairwise comparisons on the model.
+        """
         query_vector = self.embed(query)
         results_combs = list(combinations(self.results[query], 2))
         results_scores = {}
@@ -128,7 +131,7 @@ class LTR(LTRModel):
         Retrains the model with the selected result as the most relevant,
         and updates the local cache of results based on the updated model.
         """
-        self.train(*self.gen_train_data(query, selected_res), 100)
+        self.train(*self.gen_train_data(query, selected_res), 10)
 
         query_vector = self.embed(query)
         results_combs = list(combinations(self.results[query], 2))
