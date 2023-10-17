@@ -1,4 +1,5 @@
 import io
+from sys import stdout
 
 def split(data: io.BytesIO, size: int) -> list[bytes]:
     """
@@ -12,3 +13,10 @@ def split(data: io.BytesIO, size: int) -> list[bytes]:
             break
         chunks.append(chunk)
     return chunks
+
+def preprint(s: str):
+    stdout.write(s)
+
+def reprint(s: str):
+    stdout.flush()
+    stdout.write(s)

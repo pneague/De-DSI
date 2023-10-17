@@ -49,6 +49,7 @@ class LTRCommunity(Community):
             self.ready_for_input.clear()
 
     def started(self) -> None:
+        print('Indexing (please wait)...')
         self.ltr = LTR()
 
         async def app() -> None:
@@ -67,14 +68,15 @@ class LTRCommunity(Community):
                 await sleep(0)
                 self.ltr.on_result_selected(query, selected_res)
                 for peer in self.get_peers():
-                    print('sending update...')
                     model_bf = self.ltr.serialize_model()
                     chunks = utils.split(model_bf, 8192)
                     _id = os.urandom(16)
+                    utils.preprint(f'sending update (packet 0/{len(chunks)})')
                     for i, chunk in enumerate(chunks):
+                        utils.reprint(f'\rsending update (packet {i+1}/{len(chunks)})')
                         self.ez_send(peer, UpdateModel(_id, i+1, len(chunks), chunk))
                         time.sleep(0.01)
-                    print('update sent')
+                    print('\n')
 
         self.register_task("app", app, delay=0)
 
