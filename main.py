@@ -18,7 +18,7 @@ from ipv8_service import IPv8
 
 from simple_term_menu import TerminalMenu
 from ltr import LTR
-import utils
+from utils import *
 
 # Enhance normal dataclasses for IPv8 (see the serialization documentation)
 dataclass = overwrite_dataclass(dataclass)
@@ -44,7 +44,7 @@ class LTRCommunity(Community):
     def input_thread(self):
         while True:
             self.ready_for_input.wait()
-            query = input("QUERY: ")
+            query = input(f"{colorize('QUERY', 'green')}:")
             self.input_queue.put(query)
             self.ready_for_input.clear()
 
@@ -55,9 +55,7 @@ class LTRCommunity(Community):
         async def app() -> None:
             threading.Thread(target=self.input_thread, daemon=True).start()
             while True:
-                # Set the event to indicate that we're ready for new input
                 self.ready_for_input.set()
-                
                 while self.input_queue.empty():
                     await sleep(0.1)
 
@@ -65,15 +63,16 @@ class LTRCommunity(Community):
                 results = self.ltr.query(query)
                 terminal_menu = TerminalMenu(results)
                 selected_res = terminal_menu.show()
+                print(f"{colorize('RESULT', 'blue')}:", results[selected_res])
                 await sleep(0)
                 self.ltr.on_result_selected(query, selected_res)
                 for peer in self.get_peers():
                     model_bf = self.ltr.serialize_model()
-                    chunks = utils.split(model_bf, 8192)
+                    chunks = split(model_bf, 8192)
                     _id = os.urandom(16)
-                    utils.preprint(f'sending update (packet 0/{len(chunks)})')
+                    preprint(f'sending update (packet 0/{len(chunks)})')
                     for i, chunk in enumerate(chunks):
-                        utils.reprint(f'\rsending update (packet {i+1}/{len(chunks)})')
+                        reprint(f'\rsending update (packet {i+1}/{len(chunks)})')
                         self.ez_send(peer, UpdateModel(_id, i+1, len(chunks), chunk))
                         time.sleep(0.01)
                     print('\n')

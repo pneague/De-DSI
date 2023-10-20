@@ -65,30 +65,22 @@ class LTR(LTRModel):
         """
         results = self._query_model(query)
         query_vector = self.embed(query)
-        pos_train_data, neg_train_data = [], []
 
-        # reordering result indices with selected_res as the first element
-        order = list(range(len(results)))
-        order_combs = list(combinations(order, 2))
-        new_order = [selected_res] + order[:order.index(selected_res)] + order[order.index(selected_res)+1:]
+        pos_train_data = [self.make_input(
+            query_vector,
+            self.embeddings_map[results[selected_res]],
+            self.embeddings_map[results[i]]
+        ) for i in range(len(results)) if i != selected_res]
 
-        for i, j in order_combs:
-            if new_order.index(i) > new_order.index(j):
-                sup_doc = self.embeddings_map[results[j]]
-                inf_doc = self.embeddings_map[results[i]]
-            else:
-                sup_doc = self.embeddings_map[results[j]]
-                inf_doc = self.embeddings_map[results[i]]
-
-            pos_train_data.append(
-                    self.make_input(query_vector, sup_doc, inf_doc)
-                )
-            neg_train_data.append(
-                    self.make_input(query_vector, inf_doc, sup_doc)
-                )
+        neg_train_data = [self.make_input(
+            query_vector,
+            self.embeddings_map[results[i]],
+            self.embeddings_map[results[selected_res]]
+        ) for i in range(len(results)) if i != selected_res]
 
         pos_train_data = torch.from_numpy(np.array(pos_train_data))
         neg_train_data = torch.from_numpy(np.array(neg_train_data))
+
         return pos_train_data, neg_train_data
     
     def query(self, query: str) -> list[str]:
@@ -128,7 +120,7 @@ class LTR(LTRModel):
         Retrains the model with the selected result as the most relevant,
         and updates the local cache of results based on the updated model.
         """
-        self.train(*self.gen_train_data(query, selected_res), 10)
+        self.train(*self.gen_train_data(query, selected_res), 1)
 
         query_vector = self.embed(query)
         results_combs = list(combinations(self.results[query], 2))

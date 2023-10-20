@@ -20,3 +20,13 @@ def preprint(s: str):
 def reprint(s: str):
     stdout.flush()
     stdout.write(s)
+
+def colorize(s: str, color: str) -> str:
+    """
+    Colorize a string.
+    """
+    colors = {
+        'green': '\033[92m',
+        'blue': '\033[94m',
+    }
+    return f'{colors[color]}{s}\033[0m'
