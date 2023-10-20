@@ -66,29 +66,26 @@ class LTR(LTRModel):
         results = self._query_model(query)
         query_vector = self.embed(query)
         pos_train_data, neg_train_data = [], []
-        for i, _ in enumerate(results):
-            # selected_res is superior to any other result
-            if selected_res != None and i != selected_res:
-                sup_doc = self.embeddings_map[results[selected_res]]
-                inf_doc = self.embeddings_map[results[i]]
-                pos_train_data.append(self.make_input(query_vector, sup_doc, inf_doc))
-                neg_train_data.append(self.make_input(query_vector, inf_doc, sup_doc))
-            
-            # previous results are superior to current result
-            for j in range(i):
-                if j == selected_res: continue
-                inf_doc = self.embeddings_map[results[i]]
-                sup_doc = self.embeddings_map[results[j]]
-                pos_train_data.append(self.make_input(query_vector, sup_doc, inf_doc))
-                neg_train_data.append(self.make_input(query_vector, inf_doc, sup_doc))
 
-            # current result is superior to next results
-            for j in range(i+1, len(results)):
-                if j == selected_res: continue
-                sup_doc = self.embeddings_map[results[i]]
-                inf_doc = self.embeddings_map[results[j]]
-                pos_train_data.append(self.make_input(query_vector, sup_doc, inf_doc))
-                neg_train_data.append(self.make_input(query_vector, inf_doc, sup_doc))
+        # reordering result indices with selected_res as the first element
+        order = list(range(len(results)))
+        order_combs = list(combinations(order, 2))
+        new_order = [selected_res] + order[:order.index(selected_res)] + order[order.index(selected_res)+1:]
+
+        for i, j in order_combs:
+            if new_order.index(i) > new_order.index(j):
+                sup_doc = self.embeddings_map[results[j]]
+                inf_doc = self.embeddings_map[results[i]]
+            else:
+                sup_doc = self.embeddings_map[results[j]]
+                inf_doc = self.embeddings_map[results[i]]
+
+            pos_train_data.append(
+                    self.make_input(query_vector, sup_doc, inf_doc)
+                )
+            neg_train_data.append(
+                    self.make_input(query_vector, inf_doc, sup_doc)
+                )
 
         pos_train_data = torch.from_numpy(np.array(pos_train_data))
         neg_train_data = torch.from_numpy(np.array(neg_train_data))
