@@ -7,6 +7,7 @@ import threading
 import queue
 import torch
 import time
+from copy import deepcopy
 
 from ipv8.community import Community, CommunitySettings
 from ipv8.configuration import ConfigBuilder, Strategy, WalkerDefinition, default_bootstrap_defs
@@ -44,7 +45,7 @@ class LTRCommunity(Community):
     def input_thread(self):
         while True:
             self.ready_for_input.wait()
-            query = input(f"{colorize('QUERY', 'green')}:")
+            query = input(f"\r{colorize('QUERY', 'green')}:")
             self.input_queue.put(query)
             self.ready_for_input.clear()
 
@@ -65,17 +66,19 @@ class LTRCommunity(Community):
                 selected_res = terminal_menu.show()
                 print(f"{colorize('RESULT', 'blue')}:", results[selected_res])
                 await sleep(0)
+                prev_model = deepcopy(self.ltr.model.state_dict())
                 self.ltr.on_result_selected(query, selected_res)
+                compare_models(prev_model, deepcopy(self.ltr.model.state_dict()))
+                model_bf = self.ltr.serialize_model()
+                chunks = split(model_bf, 8192)
                 for peer in self.get_peers():
-                    model_bf = self.ltr.serialize_model()
-                    chunks = split(model_bf, 8192)
                     _id = os.urandom(16)
                     preprint(f'sending update (packet 0/{len(chunks)})')
                     for i, chunk in enumerate(chunks):
                         reprint(f'\rsending update (packet {i+1}/{len(chunks)})')
                         self.ez_send(peer, UpdateModel(_id, i+1, len(chunks), chunk))
                         time.sleep(0.01)
-                    print('\n')
+                    print()
 
         self.register_task("app", app, delay=0)
 

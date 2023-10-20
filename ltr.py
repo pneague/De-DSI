@@ -30,7 +30,6 @@ class LTR(LTRModel):
             for row in reader:
                 self.metadata[row[0]] = row[3]
         
-        docs = []
         with open('data/embeddings.bin', 'rb') as embeddings_bin:
             format_str = '8s768f'
             while True:
@@ -41,10 +40,9 @@ class LTR(LTRModel):
                 uid = data[0].decode('ascii').strip()
                 features = list(data[1:])
                 self.embeddings_map[uid] = features
-                docs.append((uid, self.metadata[uid], features))
 
         self.embeddings = Embeddings({ 'path': 'allenai/specter' })
-        self.embeddings.index(docs)
+        self.embeddings.load('data/embeddings_index.tar.gz')
 
     def embed(self, x: str) -> list[float]:
         """
