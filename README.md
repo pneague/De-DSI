@@ -7,7 +7,7 @@ According to their [paper](https://arxiv.org/pdf/2004.10706.pdf), the embeddings
 
 ## Demo
 
-![Demo](https://github.com/mg98/p2p-ol2r/assets/22933507/d4713e89-fd80-45bf-ad77-4a2a34a6a4e2)
+![Demo](https://github.com/mg98/p2p-ol2r/assets/22933507/003e636d-857c-4089-9955-9ac19d16927a)
 
 ## How It Works
 
@@ -54,3 +54,9 @@ python main.py <id>
 ```
 
 Model is stored in memory; you restart the app, you start from scratch.
+
+## ⚠️ Experimental
+
+Use `-q` to enable quantization of the model.
+In our experiments, this yielded a data reduction of 4x when transferring the model,
+however, at the cost of performance speed and accuracy.
