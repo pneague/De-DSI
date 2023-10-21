@@ -32,10 +32,12 @@ class UpdateModel:
 
 
 class LTRCommunity(Community):
-    community_id = b'\x9d\x10\xaa\x8c\xfa\x0b\x19\xee\x96\x8d\xf4\x91\xea\xdc\xcb\x94\xa7\x1d\x8b\x9c'
+    community_id = b'\x9d\x10\xaa\x8c\xfa\x0b\x19\xee\x96\x8d\xf4\x91\xea\xdc\xcb\x94\xa7\x1d\x8b\x00'
 
     def __init__(self, settings: CommunitySettings) -> None:
         super().__init__(settings)
+        if args.quantize:
+            self.community_id = self.community_id[:-1] + bytes([0x01])
         self.add_message_handler(UpdateModel, self.on_message)
         self.input_queue = queue.Queue()
         self.ready_for_input = threading.Event()
