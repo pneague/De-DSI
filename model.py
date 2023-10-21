@@ -27,7 +27,7 @@ class LTRModel:
                 ('quant', QuantStub())] + layers + [('dequant', DeQuantStub())
             ]))
             self.model.eval()
-            self.model.qconfig = get_default_qat_qconfig('x86')
+            self.model.qconfig = get_default_qat_qconfig('onednn')
             self.model = fuse_modules(self.model,
                 [['lin1', 'relu1'], ['lin2', 'relu2'], ['lin3', 'relu3']])
             self.model = prepare_qat(self.model.train())

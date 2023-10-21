@@ -6,6 +6,8 @@ from txtai.embeddings import Embeddings
 from itertools import combinations
 from operator import itemgetter
 from model import LTRModel
+import warnings
+warnings.filterwarnings('ignore', category=UserWarning, message='TypedStorage is deprecated')
 
 class LTR(LTRModel):
     """
