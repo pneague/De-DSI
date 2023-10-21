@@ -4,12 +4,14 @@ import torch.nn as nn
 import numpy as np
 from collections import OrderedDict
 from torch.ao.quantization import get_default_qat_qconfig, default_observer, default_weight_observer, prepare_qat, fuse_modules, QuantStub, DeQuantStub
+from utils import *
 
 class LTRModel:
     
-    def __init__(self) -> None:
-        model_fp32 = nn.Sequential(OrderedDict([
-            ('quant', QuantStub()),
+    def __init__(self, quantize: bool) -> None:
+        self._quantize = quantize
+
+        layers = [
             ('lin1', nn.Linear(3*768, 256)),
             ('relu1', nn.ReLU()),
             ('lin2', nn.Linear(256, 256)),
@@ -17,46 +19,33 @@ class LTRModel:
             ('lin3', nn.Linear(256, 256)),
             ('relu3', nn.ReLU()),
             ('lin4', nn.Linear(256, 1)),
-            ('sigmoid', nn.Sigmoid()),
-            ('dequant', DeQuantStub())
-        ]))
+            ('sigmoid', nn.Sigmoid())
+        ]
 
-        # model must be set to eval for fusion to work
-        model_fp32.eval()
-
-        # attach a global qconfig, which contains information about what kind
-        # of observers to attach. Use 'x86' for server inference and 'qnnpack'
-        # for mobile inference. Other quantization configurations such as selecting
-        # symmetric or asymmetric quantization and MinMax or L2Norm calibration techniques
-        # can be specified here.
-        # Note: the old 'fbgemm' is still available but 'x86' is the recommended default
-        # for server inference.
-        # model_fp32.qconfig = torch.ao.quantization.get_default_qconfig('fbgemm')
-        qat_qconfig = get_default_qat_qconfig('x86')
-        model_fp32.qconfig = qat_qconfig
-
-        # fuse the activations to preceding layers, where applicable
-        # this needs to be done manually depending on the model architecture
-        model_fp32_fused = fuse_modules(model_fp32,
-            [['lin1', 'relu1'], ['lin2', 'relu2'], ['lin3', 'relu3']])
-
-        # Prepare the model for QAT. This inserts observers and fake_quants in
-        # the model needs to be set to train for QAT logic to work
-        # the model that will observe weight and activation tensors during calibration.
-        self.model = prepare_qat(model_fp32_fused.train())
-
-        #######
-        #self.model = model_fp32
+        if self._quantize:
+            self.model = nn.Sequential(OrderedDict([
+                ('quant', QuantStub())] + layers + [('dequant', DeQuantStub())
+            ]))
+            self.model.eval()
+            self.model.qconfig = get_default_qat_qconfig('x86')
+            self.model = fuse_modules(self.model,
+                [['lin1', 'relu1'], ['lin2', 'relu2'], ['lin3', 'relu3']])
+            self.model = prepare_qat(self.model.train())
+        else:
+            self.model = nn.Sequential(OrderedDict(layers))
 
         self._criterion = nn.BCELoss()
         self._optimizer = torch.optim.SGD(self.model.parameters(), lr=0.01)
 
     def serialize_model(self) -> io.BytesIO:
         buffer = io.BytesIO()
-        
-        self.model.eval()
-        quantized_model = torch.quantization.convert(self.model, inplace=False)
-        torch.save(quantized_model, buffer)
+        if self._quantize:
+            self.model.eval()
+            model = torch.quantization.convert(self.model, inplace=False)
+        else:
+            model = self.model
+
+        torch.save(model, buffer)
 
         return buffer
 
@@ -66,34 +55,44 @@ class LTRModel:
         """
         return np.array([query_vector, sup_doc_vector, inf_doc_vector], dtype=np.float32).flatten()
 
+    def _train_step(self, train_data: np.ndarray, label: bool) -> float:
+        output = self.model(train_data)
+        loss = self._criterion(output, torch.tensor([float(label)]))
+        self._optimizer.zero_grad()
+        loss.backward()
+        self._optimizer.step()
+        return loss.item()
+
     def train(self, pos_train_data, neg_train_data, num_epochs):
         self.model.train()
-        for epoch in range(num_epochs):
-            losses = []
-            # train positive pairs
-            for data in pos_train_data:
-                output = self.model(data)
-                loss = self._criterion(output, torch.tensor([1.0]))
-                self._optimizer.zero_grad()
-                loss.backward()
-                self._optimizer.step()
-                losses.append(loss.item())
-            # train negative pairs too
-            for data in neg_train_data:
-                output = self.model(data)
-                loss = self._criterion(output, torch.tensor([0.0]))
-                self._optimizer.zero_grad()
-                loss.backward()
-                self._optimizer.step()
-                losses.append(loss.item())
 
-            if (epoch + 1) == num_epochs:
-                print(f'Epoch [{epoch + 1}/{num_epochs}], Loss: {(sum(losses) / len(losses)):.4f}')
+        preprint(fmt(f'Epoch [0/{num_epochs}], Loss: n/a', 'gray'))
+        for epoch in range(num_epochs):
+            losses = [
+                self._train_step(data, True) for data in pos_train_data
+                ] + [
+                self._train_step(data, False) for data in neg_train_data
+                ]
+            reprint(fmt(f'Epoch [{epoch + 1}/{num_epochs}], Loss: {(sum(losses) / len(losses)):.4f}', 'gray'))
+        print()
         self.model.eval()
 
     def apply_updates(self, update_model):
-        print('applying updates...')
-        update_state = update_model.state_dict()
-        for name, param in self.model.named_parameters():
-            if name in update_state:
-                param.data = (param.data + update_state[name]) / 2.0
+        if self._quantize:
+            updates = {
+                name: module for name, module in update_model.named_modules() if isinstance(module, nn.quantized.Linear)
+            }
+            for name, param in self.model.named_parameters():
+                layer, attr = name.split('.')
+                if attr == 'weight':
+                    data = updates[layer].weight()
+                elif attr == 'bias':
+                    data = updates[layer].bias()
+                param.data = (param.data + torch.dequantize(data).data) / 2.0
+        else:
+            update_model_state = update_model.state_dict()
+            for name, param in self.model.named_parameters():
+                if name in update_model_state:
+                    param.data = (param.data + update_model_state[name]) / 2.0
+        
+        print(fmt('Model updated', 'gray'))

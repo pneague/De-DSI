@@ -22,13 +22,13 @@ class LTR(LTRModel):
     embeddings = None
     results = {}
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, quantize: bool):
+        super().__init__(quantize)
 
         with open('data/metadata.csv', 'r') as f:
             reader = csv.reader(f)
             for row in reader:
-                self.metadata[row[0]] = row[3]
+                self.metadata[row[0]] = row[3].strip()
         
         with open('data/embeddings.bin', 'rb') as embeddings_bin:
             format_str = '8s768f'
@@ -118,7 +118,7 @@ class LTR(LTRModel):
         Retrains the model with the selected result as the most relevant,
         and updates the local cache of results based on the updated model.
         """
-        self.train(*self.gen_train_data(query, selected_res), 1)
+        self.train(*self.gen_train_data(query, selected_res), 10)
 
         query_vector = self.embed(query)
         results_combs = list(combinations(self.results[query], 2))

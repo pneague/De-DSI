@@ -20,17 +20,21 @@ def preprint(s: str):
 
 def reprint(s: str):
     stdout.flush()
-    stdout.write(s)
+    stdout.write('\r' + s)
 
-def colorize(s: str, color: str) -> str:
+def fmt(s: str, *fmts: str) -> str:
     """
     Colorize a string.
     """
-    colors = {
+    format_defs = {
         'green': '\033[92m',
         'blue': '\033[94m',
+        'purple': '\033[95m',
+        'gray': '\033[90m',
+        'italic': '\033[3m',
+        'bold': '\033[1m',
     }
-    return f'{colors[color]}{s}\033[0m'
+    return ''.join(format_defs[fmt] for fmt in fmts) + s + '\033[0m'
 
 def compare_models(state_dict1, state_dict2, eps=1e-6):
     total_changed = 0
@@ -47,4 +51,4 @@ def compare_models(state_dict1, state_dict2, eps=1e-6):
         mismatch_indices = torch.where(~torch.isclose(flat_tensor1, flat_tensor2, atol=eps))[0]
         total_changed += len(mismatch_indices)
         
-    print(f"{total_changed}/{total_params} parameters changed ({int(total_changed/total_params*100)}%)")
+    print(fmt(f"{total_changed}/{total_params} parameters changed ({int(total_changed/total_params*100)}%)", 'gray', 'italic'))

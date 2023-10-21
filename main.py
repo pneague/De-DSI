@@ -7,8 +7,7 @@ import threading
 import queue
 import torch
 import time
-from copy import deepcopy
-
+import argparse
 from ipv8.community import Community, CommunitySettings
 from ipv8.configuration import ConfigBuilder, Strategy, WalkerDefinition, default_bootstrap_defs
 from ipv8.lazy_community import lazy_wrapper
@@ -45,13 +44,13 @@ class LTRCommunity(Community):
     def input_thread(self):
         while True:
             self.ready_for_input.wait()
-            query = input(f"\r{colorize('QUERY', 'green')}:")
+            query = input(f"\r{fmt('QUERY', 'purple')}: ")
             self.input_queue.put(query)
             self.ready_for_input.clear()
 
     def started(self) -> None:
         print('Indexing (please wait)...')
-        self.ltr = LTR()
+        self.ltr = LTR(args.quantize)
 
         async def app() -> None:
             threading.Thread(target=self.input_thread, daemon=True).start()
@@ -64,24 +63,23 @@ class LTRCommunity(Community):
                 results = self.ltr.query(query)
                 terminal_menu = TerminalMenu(results)
                 selected_res = terminal_menu.show()
-                print(f"{colorize('RESULT', 'blue')}:", results[selected_res])
+                if selected_res is None: continue
+                print(f"{fmt('RESULT', 'blue')}:", results[selected_res])
                 await sleep(0)
-                prev_model = deepcopy(self.ltr.model.state_dict())
+
                 self.ltr.on_result_selected(query, selected_res)
-                compare_models(prev_model, deepcopy(self.ltr.model.state_dict()))
                 model_bf = self.ltr.serialize_model()
                 chunks = split(model_bf, 8192)
                 for peer in self.get_peers():
                     _id = os.urandom(16)
-                    preprint(f'sending update (packet 0/{len(chunks)})')
+                    preprint(fmt(f'Sending update (packet 0/{len(chunks)})', 'gray'))
                     for i, chunk in enumerate(chunks):
-                        reprint(f'\rsending update (packet {i+1}/{len(chunks)})')
+                        reprint(fmt(f'Sending update (packet {i+1}/{len(chunks)})', 'gray'))
                         self.ez_send(peer, UpdateModel(_id, i+1, len(chunks), chunk))
                         time.sleep(0.01)
                     print()
 
         self.register_task("app", app, delay=0)
-
 
     @lazy_wrapper(UpdateModel)
     def on_message(self, peer: Peer, payload: UpdateModel) -> None:
@@ -93,17 +91,22 @@ class LTRCommunity(Community):
                 model_bf.write(packet.data)
             self.packets = list(filter(lambda x: x.id != payload.id, self.packets))
             model_bf.seek(0)
-            self.ltr.apply_updates(torch.load(model_bf))
-            print('model updated')
+            model = torch.load(model_bf)
+            self.ltr.apply_updates(model)
 
 async def start_communities() -> None:
     builder = ConfigBuilder().clear_keys().clear_overlays()
-    builder.add_key("my peer", "medium", f"certs/ec{sys.argv[1]}.pem")
+    builder.add_key("my peer", "medium", f"certs/ec{args.id}.pem")
     builder.add_overlay("LTRCommunity", "my peer",
                         [WalkerDefinition(Strategy.RandomWalk, 10, {'timeout': 3.0})],
                         default_bootstrap_defs, {}, [('started',)])
     await IPv8(builder.finalize(),
                 extra_communities={'LTRCommunity': LTRCommunity}).start()
     await run_forever()
+
+parser = argparse.ArgumentParser(prog='Peer-to-Peer Online Learning-to-Rank')
+parser.add_argument('id')
+parser.add_argument('-q', '--quantize', action='store_true')
+args = parser.parse_args()
 
 run(start_communities())
