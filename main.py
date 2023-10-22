@@ -74,9 +74,9 @@ class LTRCommunity(Community):
                 chunks = split(model_bf, 8192)
                 for peer in self.get_peers():
                     _id = os.urandom(16)
-                    preprint(fmt(f'Sending update (packet 0/{len(chunks)})', 'gray'))
+                    print(fmt(f'Sending update (packet 0/{len(chunks)})', 'gray'), end='')
                     for i, chunk in enumerate(chunks):
-                        reprint(fmt(f'Sending update (packet {i+1}/{len(chunks)})', 'gray'))
+                        print(fmt(f'\rSending update (packet {i+1}/{len(chunks)})', 'gray'), end='')
                         self.ez_send(peer, UpdateModel(_id, i+1, len(chunks), chunk))
                         time.sleep(0.01)
                     print()

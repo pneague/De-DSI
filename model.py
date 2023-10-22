@@ -66,14 +66,14 @@ class LTRModel:
     def train(self, pos_train_data, neg_train_data, num_epochs):
         self.model.train()
 
-        preprint(fmt(f'Epoch [0/{num_epochs}], Loss: n/a', 'gray'))
+        print(fmt(f'Epoch [0/{num_epochs}], Loss: n/a', 'gray'), end='')
         for epoch in range(num_epochs):
             losses = [
                 self._train_step(data, True) for data in pos_train_data
                 ] + [
                 self._train_step(data, False) for data in neg_train_data
                 ]
-            reprint(fmt(f'Epoch [{epoch + 1}/{num_epochs}], Loss: {(sum(losses) / len(losses)):.4f}', 'gray'))
+            print(fmt(f'\rEpoch [{epoch + 1}/{num_epochs}], Loss: {(sum(losses) / len(losses)):.4f}', 'gray'), end='')
         print()
         self.model.eval()
 
