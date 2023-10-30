@@ -8,18 +8,22 @@ from utils import *
 
 class LTRModel:
     
-    def __init__(self, quantize: bool) -> None:
+    def __init__(self, quantize: bool, df) -> None:
         self._quantize = quantize
+        self.number_of_documents = df['doc_id'].nunique()
+
 
         layers = [
-            ('lin1', nn.Linear(3*768, 256)),
+            ('lin1', nn.Linear(768, 256)),  # Adjusting the input features from 3*768 to 768
             ('relu1', nn.ReLU()),
             ('lin2', nn.Linear(256, 256)),
             ('relu2', nn.ReLU()),
             ('lin3', nn.Linear(256, 256)),
             ('relu3', nn.ReLU()),
-            ('lin4', nn.Linear(256, 1)),
-            ('sigmoid', nn.Sigmoid())
+            ('lin4', nn.Linear(256, self.number_of_documents)),
+            # Adjusting the output features for multi-class classification
+            # Removing sigmoid activation as we are now dealing with a multi-class problem
+            # and softmax is applied inherently by the CrossEntropyLoss
         ]
 
         if self._quantize:
@@ -34,7 +38,7 @@ class LTRModel:
         else:
             self.model = nn.Sequential(OrderedDict(layers))
 
-        self._criterion = nn.BCELoss()
+        self._criterion = nn.CrossEntropyLoss()
         self._optimizer = torch.optim.SGD(self.model.parameters(), lr=0.01)
 
     def serialize_model(self) -> io.BytesIO:
@@ -49,31 +53,29 @@ class LTRModel:
 
         return buffer
 
-    def make_input(self, query_vector, sup_doc_vector, inf_doc_vector):
+    def make_input(self, query_vector):
         """
-        Make (query, document-pair) input for model.
+        Make query input for model.
         """
-        return np.array([query_vector, sup_doc_vector, inf_doc_vector], dtype=np.float32).flatten()
+        return np.array([query_vector], dtype=np.float32).flatten()
 
-    def _train_step(self, train_data: np.ndarray, label: bool) -> float:
-        output = self.model(train_data)
-        loss = self._criterion(output, torch.tensor([float(label)]))
+    def _train_step(self, train_data: np.ndarray, label: int) -> float:
+        if label.shape[0] > 1:  # Checking if one-hot encoded
+            label = torch.argmax(label, dim=0)
+        output = self.model(torch.FloatTensor(train_data))  # Ensure input is a proper torch tensor
+        loss = self._criterion(output, label)  # CrossEntropy expects 2D input
         self._optimizer.zero_grad()
         loss.backward()
         self._optimizer.step()
         return loss.item()
 
-    def train(self, pos_train_data, neg_train_data, num_epochs):
+    def train(self, train_data, labels, num_epochs):
         self.model.train()
 
         print(fmt(f'Epoch [0/{num_epochs}], Loss: n/a', 'gray'), end='')
         for epoch in range(num_epochs):
-            losses = [
-                self._train_step(data, True) for data in pos_train_data
-                ] + [
-                self._train_step(data, False) for data in neg_train_data
-                ]
-            print(fmt(f'\rEpoch [{epoch + 1}/{num_epochs}], Loss: {(sum(losses) / len(losses)):.4f}', 'gray'), end='')
+            losses = self._train_step(train_data, labels)
+            print(fmt(f'\rEpoch [{epoch + 1}/{num_epochs}], Loss: {losses}', 'gray'), end='')
         print()
         self.model.eval()
 

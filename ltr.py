@@ -19,18 +19,18 @@ class LTR(LTRModel):
         embeddings: txtai embeddings model
         results: local cache of query => results
     """
-    metadata = {}
     embeddings_map = {}
     embeddings = None
     results = {}
 
-    def __init__(self, quantize: bool):
-        super().__init__(quantize)
+    def __init__(self, quantize: bool, df):
+        super().__init__(quantize, df)
 
-        with open('data/metadata.csv', 'r') as f:
-            reader = csv.reader(f)
-            for row in reader:
-                self.metadata[row[0]] = row[3].strip()
+        #
+        # with open('data/metadata.csv', 'r') as f:
+        #     reader = csv.reader(f)
+        #     for row in reader:
+        #         self.metadata[row[0]] = row[3].strip()
         
         with open('data/embeddings.bin', 'rb') as embeddings_bin:
             format_str = '8s768f'
@@ -54,87 +54,66 @@ class LTR(LTRModel):
 
     def gen_train_data(self, query: str, selected_res: int = None) -> tuple[np.ndarray, np.ndarray]:
         """
-        Generate training data. (We use sup(erior) and inf(erior) to denote relative relevance.)
+        Generate training data based on the selected relevant document.
 
         Args:
             query: query string
             selected_res: index of selected result
-        
+
         Returns:
-            tuple of (positive training data, negative training data)
+            Tuple of input vectors and corresponding labels
         """
-        results = self._query_model(query)
+        # Check if the query results are already cached, else retrieve using embeddings
         query_vector = self.embed(query)
 
-        pos_train_data = [self.make_input(
-            query_vector,
-            self.embeddings_map[results[selected_res]],
-            self.embeddings_map[results[i]]
-        ) for i in range(len(results)) if i != selected_res]
+        # Now we generate one-hot labels based on selected results. The selected document is "1", and all others are "0".
+        labels = [1 if i == selected_res else 0 for i in range(self.number_of_documents)]
 
-        neg_train_data = [self.make_input(
-            query_vector,
-            self.embeddings_map[results[i]],
-            self.embeddings_map[results[selected_res]]
-        ) for i in range(len(results)) if i != selected_res]
 
-        pos_train_data = torch.from_numpy(np.array(pos_train_data))
-        neg_train_data = torch.from_numpy(np.array(neg_train_data))
+        # Pair each document embedding with the query embedding
+        train_data = query_vector
 
-        return pos_train_data, neg_train_data
-    
+        return np.array(train_data), np.array(labels)
+
     def query(self, query: str) -> list[str]:
         """
-        Returns ranked list of results (titles) for a query. 
+        Returns ranked list of results (titles) for a query.
         If results to this query are unknown, semantic search is performed, and the model is trained.
         """
-        if query not in self.results: 
+        if query not in self.results:
             # bootstrap model with semantic search results
             self.results[query] = [x for x, _ in self.embeddings.search(query, 5)]
 
-        return [self.metadata[res] for res in self._query_model(query)]
-    
-    def _query_model(self, query: str):
-        """
-        Determine ranking of results in `self.results[query]` based on pairwise comparisons on the model.
-        """
+        # Here, we're going to score each document individually and rank based on those scores
         query_vector = self.embed(query)
-        results_combs = list(combinations(self.results[query], 2))
-        results_scores = {}
-        for result_pair in results_combs:
-            vec1 = self.embeddings_map[result_pair[0]]
-            vec2 = self.embeddings_map[result_pair[1]]
-            is_sup = torch.round(
-                    self.model(torch.from_numpy(self.make_input(query_vector, vec1, vec2)))
-                ).item()
-            k = result_pair[0]
-            results_scores[k] = results_scores.get(k, 0) + is_sup
-            k = result_pair[1]
-            results_scores[k] = results_scores.get(k, 0) + (1 - is_sup)
 
-        results_scores = dict(sorted(results_scores.items(), key=itemgetter(1), reverse=True))
-        return [k for k, _ in results_scores.items()]
-    
+        # Preparing the input for the model. Each row will be the concatenation of the query vector with a document vector.
+        input_vectors = np.array([query_vector + self.embeddings_map[doc_id] for doc_id in self.results[query]])
+
+        # Convert to a PyTorch tensor
+        input_vectors = torch.from_numpy(input_vectors).float()
+
+        # Get scores from the model
+        scores = self.model(input_vectors)  # This line assumes your model returns multiple scores in one forward pass.
+
+        # Convert scores to a Python list and pair each score with the document's index
+        scored_results = list(enumerate(scores.tolist()))
+
+        # Sort the results based on the scores
+        ranked_results = sorted(scored_results, key=lambda x: x[1], reverse=True)
+
+        # Retrieve the document IDs based on their new ranking
+        ranked_doc_ids = [self.results[query][index] for index, _ in ranked_results]
+
+        return [doc_id for doc_id in ranked_doc_ids]
+
     def on_result_selected(self, query: str, selected_res: int):
         """
-        Retrains the model with the selected result as the most relevant,
-        and updates the local cache of results based on the updated model.
+        Retrains the model with the selected result as the most relevant.
         """
-        self.train(*self.gen_train_data(query, selected_res), 10)
+        train_data, labels = self.gen_train_data(query, selected_res)
+        self.train(torch.from_numpy(train_data).float(), torch.tensor(labels), 10)
 
-        query_vector = self.embed(query)
-        results_combs = list(combinations(self.results[query], 2))
-        results_scores = {}
-        for result_pair in results_combs:
-            vec1 = self.embeddings_map[result_pair[0]]
-            vec2 = self.embeddings_map[result_pair[1]]
-            is_sup = torch.round(
-                    self.model(torch.from_numpy(self.make_input(query_vector, vec1, vec2)))
-                ).item()
-            k = result_pair[0]
-            results_scores[k] = results_scores.get(k, 0) + is_sup
-            k = result_pair[1]
-            results_scores[k] = results_scores.get(k, 0) + (1 - is_sup)
+        # Update the cached results with a new ranking based on the retrained model
+        self.results[query] = self.query(query)
 
-        results_scores = dict(sorted(results_scores.items(), key=itemgetter(1), reverse=True))
-        self.results[query] = [k for k, _ in results_scores.items()]

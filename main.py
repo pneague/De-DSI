@@ -16,12 +16,18 @@ from ipv8.types import Peer
 from ipv8.util import run_forever
 from ipv8_service import IPv8
 
-from simple_term_menu import TerminalMenu
+# from simple_term_menu import TerminalMenu
 from ltr import LTR
 from utils import *
+from vars import id1, id2, quantize, take_top_n_records
+import pandas as pd
 
 # Enhance normal dataclasses for IPv8 (see the serialization documentation)
 dataclass = overwrite_dataclass(dataclass)
+
+df = pd.read_csv('data/orcas.tsv', sep='\t', header=None, names=['query_id', 'query', 'doc_id', 'doc'],
+                 nrows=take_top_n_records).fillna('None')
+docs = pd.Series(df['doc_id'].unique())
 
 @dataclass(msg_id=1)  # The value 1 identifies this message and must be unique per community
 class UpdateModel:
@@ -36,37 +42,37 @@ class LTRCommunity(Community):
 
     def __init__(self, settings: CommunitySettings) -> None:
         super().__init__(settings)
-        if args.quantize:
+        if quantize:
             self.community_id = self.community_id[:-1] + bytes([0x01])
         self.add_message_handler(UpdateModel, self.on_message)
         self.input_queue = queue.Queue()
         self.ready_for_input = threading.Event()
         self.packets: list[UpdateModel] = []
 
-    def input_thread(self):
-        while True:
-            self.ready_for_input.wait()
-            query = input(f"\r{fmt('QUERY', 'purple')}: ")
-            self.input_queue.put(query)
-            self.ready_for_input.clear()
+    # def input_thread(self):
+    #     while True:
+    #         self.ready_for_input.wait()
+    #         query = input(f"\r{fmt('QUERY', 'purple')}: ")
+    #         self.input_queue.put(query)
+    #         self.ready_for_input.clear()
 
     def started(self) -> None:
         print('Indexing (please wait)...')
-        self.ltr = LTR(args.quantize)
-
+        self.ltr = LTR(quantize, df)
         async def app() -> None:
-            threading.Thread(target=self.input_thread, daemon=True).start()
+            row = 0
+            threading.Thread(daemon=True).start()
             while True:
-                self.ready_for_input.set()
-                while self.input_queue.empty():
-                    await sleep(0.1)
+                # self.ready_for_input.set()
+                # while self.input_queue.empty():
+                #     await sleep(0.1)
 
-                query = self.input_queue.get()
-                results = self.ltr.query(query)
-                terminal_menu = TerminalMenu(results)
-                selected_res = terminal_menu.show()
+                query = df.iloc[row]['query']
+                selected_res = docs[docs==df.iloc[row]['doc_id']].index[0]
+                print (query, selected_res)
+                row += 1
                 if selected_res is None: continue
-                print(f"{fmt('RESULT', 'blue')}:", results[selected_res])
+                print(f"{fmt('RESULT', 'blue')}:", selected_res)
                 await sleep(0)
 
                 self.ltr.on_result_selected(query, selected_res)
@@ -98,7 +104,7 @@ class LTRCommunity(Community):
 
 async def start_communities() -> None:
     builder = ConfigBuilder().clear_keys().clear_overlays()
-    builder.add_key("my peer", "medium", f"certs/ec{args.id}.pem")
+    builder.add_key("my peer", "medium", f"certs/ec{id1}.pem")
     builder.add_overlay("LTRCommunity", "my peer",
                         [WalkerDefinition(Strategy.RandomWalk, 10, {'timeout': 3.0})],
                         default_bootstrap_defs, {}, [('started',)])
@@ -106,9 +112,7 @@ async def start_communities() -> None:
                 extra_communities={'LTRCommunity': LTRCommunity}).start()
     await run_forever()
 
-parser = argparse.ArgumentParser(prog='Peer-to-Peer Online Learning-to-Rank')
-parser.add_argument('id')
-parser.add_argument('-q', '--quantize', action='store_true')
-args = parser.parse_args()
+
+id = 1
 
 run(start_communities())
