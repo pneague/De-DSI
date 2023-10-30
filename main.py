@@ -26,7 +26,7 @@ import pandas as pd
 dataclass = overwrite_dataclass(dataclass)
 
 df = pd.read_csv('data/orcas.tsv', sep='\t', header=None, names=['query_id', 'query', 'doc_id', 'doc'],
-                 nrows=take_top_n_records).fillna('None')
+                 nrows=take_top_n_records).dropna()
 docs = pd.Series(df['doc_id'].unique())
 
 @dataclass(msg_id=1)  # The value 1 identifies this message and must be unique per community
@@ -63,10 +63,12 @@ class LTRCommunity(Community):
             row = 0
             threading.Thread(daemon=True).start()
             while True:
+                if row >=df.shape[0]:
+                    break
                 # self.ready_for_input.set()
                 # while self.input_queue.empty():
                 #     await sleep(0.1)
-
+                print (row)
                 query = df.iloc[row]['query']
                 selected_res = docs[docs==df.iloc[row]['doc_id']].index[0]
                 print (query, selected_res)
