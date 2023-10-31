@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from collections import OrderedDict
-from torch.ao.quantization import get_default_qat_qconfig, default_observer, default_weight_observer, prepare_qat, fuse_modules, QuantStub, DeQuantStub
+from torch.ao.quantization import get_default_qat_qconfig, prepare_qat, fuse_modules, QuantStub, DeQuantStub
 from utils import *
 
 class LTRModel:
@@ -35,7 +35,7 @@ class LTRModel:
             self.model = nn.Sequential(OrderedDict(layers))
 
         self._criterion = nn.BCELoss()
-        self._optimizer = torch.optim.SGD(self.model.parameters(), lr=0.01)
+        self._optimizer = torch.optim.SGD(self.model.parameters(), lr=0.001)
 
     def serialize_model(self) -> io.BytesIO:
         buffer = io.BytesIO()
@@ -63,7 +63,7 @@ class LTRModel:
         self._optimizer.step()
         return loss.item()
 
-    def train(self, pos_train_data, neg_train_data, num_epochs):
+    def train(self, pos_train_data, neg_train_data, num_epochs: int):
         self.model.train()
 
         print(fmt(f'Epoch [0/{num_epochs}], Loss: n/a', 'gray'), end='')

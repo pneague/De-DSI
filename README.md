@@ -33,7 +33,7 @@ On the receiving end, incoming models are merged with its local model by average
   → Remedy idea: some measure of exploitation/exploration balancing.
 - A single model will be trained on multiple queries. I haven't thought through the dynamics this would have, if they are useful or disruptive, or how they can be exploited.
 
-## Setup
+## Setup & Usage
 
 Install dependencies.
 
@@ -55,8 +55,11 @@ python main.py <id>
 
 Model is stored in memory; you restart the app, you start from scratch.
 
-## ⚠️ Experimental
+### Advanced Options
 
-Use `-q` to enable quantization of the model.
+- Use `-q` to enable quantization of the model.
 In our experiments, this yielded a data reduction of 4x when transferring the model,
 however, at the cost of performance speed and accuracy.
+
+- Use `-s` to perform a simulation of user clicks on a set query
+(e.g., 100 clicks on result #1, 90 clicks on result #2, etc.).

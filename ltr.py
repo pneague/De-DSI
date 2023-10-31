@@ -46,26 +46,38 @@ class LTR(LTRModel):
         self.embeddings = Embeddings({ 'path': 'allenai/specter' })
         self.embeddings.load('data/embeddings_index.tar.gz')
 
+    def _get_results(self, query: str) -> list[str]:
+        """
+        Get results for a query from the local cache, or from the embeddings model.
+
+        Args:
+            query: query string
+
+        Returns:
+            List of result IDs
+        """
+        return self.results[query] if query in self.results else [x for x, _ in self.embeddings.search(query, 5)]
+
     def embed(self, x: str) -> list[float]:
         """
         Get vector representation of a (query) string.
         """
         return self.embeddings.batchtransform([(None, x, None)])[0]
 
-    def gen_train_data(self, query: str, selected_res: int = None) -> tuple[np.ndarray, np.ndarray]:
+    def gen_train_data(self, query: str, results: list[str], selected_res: int = None) -> tuple[np.ndarray, np.ndarray]:
         """
         Generate training data. (We use sup(erior) and inf(erior) to denote relative relevance.)
 
         Args:
             query: query string
+            results: list of results (IDs)
             selected_res: index of selected result
         
         Returns:
             tuple of (positive training data, negative training data)
         """
-        results = self._query_model(query)
         query_vector = self.embed(query)
-
+        
         pos_train_data = [self.make_input(
             query_vector,
             self.embeddings_map[results[selected_res]],
@@ -83,23 +95,22 @@ class LTR(LTRModel):
 
         return pos_train_data, neg_train_data
     
-    def query(self, query: str) -> list[str]:
-        """
-        Returns ranked list of results (titles) for a query. 
-        If results to this query are unknown, semantic search is performed, and the model is trained.
-        """
-        if query not in self.results: 
-            # bootstrap model with semantic search results
-            self.results[query] = [x for x, _ in self.embeddings.search(query, 5)]
-
-        return [self.metadata[res] for res in self._query_model(query)]
+    def result_ids_to_titles(self, results: list[str]) -> list[str]:
+        return [self.metadata[x] for x in results]
     
-    def _query_model(self, query: str):
+    def query(self, query: str) -> dict[str, str]:
         """
-        Determine ranking of results in `self.results[query]` based on pairwise comparisons on the model.
+        Determine ranking of results based on pairwise comparisons on the model.
+
+        Args:
+            query: query string
+        
+        Returns:
+            Dict of result IDs to titles ordered by their ranking
         """
         query_vector = self.embed(query)
-        results_combs = list(combinations(self.results[query], 2))
+        results = self._get_results(query)
+        results_combs = list(combinations(results, 2))
         results_scores = {}
         for result_pair in results_combs:
             vec1 = self.embeddings_map[result_pair[0]]
@@ -113,17 +124,18 @@ class LTR(LTRModel):
             results_scores[k] = results_scores.get(k, 0) + (1 - is_sup)
 
         results_scores = dict(sorted(results_scores.items(), key=itemgetter(1), reverse=True))
-        return [k for k, _ in results_scores.items()]
+        ranked_result_ids = [k for k, _ in results_scores.items()]
+        return {res_id: self.metadata[res_id] for res_id in ranked_result_ids}
     
-    def on_result_selected(self, query: str, selected_res: int):
+    def on_result_selected(self, query: str, results: list[str], selected_res: int):
         """
         Retrains the model with the selected result as the most relevant,
         and updates the local cache of results based on the updated model.
         """
-        self.train(*self.gen_train_data(query, selected_res), 10)
+        self.train(*self.gen_train_data(query, results, selected_res), 1)
 
         query_vector = self.embed(query)
-        results_combs = list(combinations(self.results[query], 2))
+        results_combs = list(combinations(self._get_results(query), 2))
         results_scores = {}
         for result_pair in results_combs:
             vec1 = self.embeddings_map[result_pair[0]]
@@ -137,4 +149,3 @@ class LTR(LTRModel):
             results_scores[k] = results_scores.get(k, 0) + (1 - is_sup)
 
         results_scores = dict(sorted(results_scores.items(), key=itemgetter(1), reverse=True))
-        self.results[query] = [k for k, _ in results_scores.items()]

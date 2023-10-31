@@ -5,9 +5,10 @@ from asyncio import run, sleep
 from dataclasses import dataclass
 import threading
 import queue
-import torch
 import time
 import argparse
+import random
+import torch
 from ipv8.community import Community, CommunitySettings
 from ipv8.configuration import ConfigBuilder, Strategy, WalkerDefinition, default_bootstrap_defs
 from ipv8.lazy_community import lazy_wrapper
@@ -32,7 +33,7 @@ class UpdateModel:
 
 
 class LTRCommunity(Community):
-    community_id = b'\x9d\x10\xaa\x8c\xfa\x0b\x19\xee\x96\x8d\xf4\x91\xea\xdc\xcb\x94\xa7\x1d\x8b\x00'
+    community_id = b'\x9d\x10\xaa\x8c\xfa\x0b\x19\xee\x96\x8d\xf4\x91\xea\xdc\xcb\x94\xa7\x1d\x8c\x00'
 
     def __init__(self, settings: CommunitySettings) -> None:
         super().__init__(settings)
@@ -54,6 +55,38 @@ class LTRCommunity(Community):
         print('Indexing (please wait)...')
         self.ltr = LTR(args.quantize)
 
+        if args.simulation:
+            print(fmt('Enter query for simulation', 'yellow'))
+            query = input(f"\r{fmt('QUERY', 'purple')}: ")
+
+            print(fmt('Consecutively select results for simulation from best to worst', 'yellow'))
+
+            ranked_result_ids = []
+            results = self.ltr.query(query)
+            remaining_results = results.copy()
+
+            for rank in range(len(results)):
+                selected_res = None
+                while selected_res is None:
+                    terminal_menu = TerminalMenu(remaining_results.values())
+                    selected_res = terminal_menu.show()
+
+                selected_id, selected_title = list(remaining_results.items())[selected_res]
+                print(f'#{rank+1}: {selected_title}')
+                ranked_result_ids.append(selected_id)
+                remaining_results.pop(selected_id)
+
+            # For result #1, simulate 100 clicks, for result #2, simulate 90 clicks, etc.
+            selected_results = []
+            for i in range(len(ranked_result_ids)):
+                selected_results += [list(results.keys()).index(ranked_result_ids[i])] * (100 - i*10)
+            random.shuffle(selected_results)
+            
+            print(fmt('Training model on simulation...', 'gray'))
+            with silence():
+                for res in selected_results:
+                    self.ltr.on_result_selected(query, ranked_result_ids, res)
+
         async def app() -> None:
             threading.Thread(target=self.input_thread, daemon=True).start()
             while True:
@@ -63,13 +96,13 @@ class LTRCommunity(Community):
 
                 query = self.input_queue.get()
                 results = self.ltr.query(query)
-                terminal_menu = TerminalMenu(results)
+                terminal_menu = TerminalMenu(results.values())
                 selected_res = terminal_menu.show()
                 if selected_res is None: continue
-                print(f"{fmt('RESULT', 'blue')}:", results[selected_res])
+                print(f"{fmt('RESULT', 'blue')}:", list(results.values())[selected_res])
                 await sleep(0)
 
-                self.ltr.on_result_selected(query, selected_res)
+                self.ltr.on_result_selected(query, list(results.keys()), selected_res)
                 model_bf = self.ltr.serialize_model()
                 chunks = split(model_bf, 8192)
                 for peer in self.get_peers():
@@ -108,7 +141,15 @@ async def start_communities() -> None:
 
 parser = argparse.ArgumentParser(prog='Peer-to-Peer Online Learning-to-Rank')
 parser.add_argument('id')
-parser.add_argument('-q', '--quantize', action='store_true')
+parser.add_argument('-q', '--quantize', action='store_true', help='enable quantization-aware training')
+parser.add_argument('-s', '--simulation', action='store_true', help='perform simulation of user clicks on a set query')
 args = parser.parse_args()
 
-run(start_communities())
+try:
+    run(start_communities())
+except KeyboardInterrupt as e:
+    print('\nProgram terminated by user.')
+    try:
+        sys.exit(130)
+    except SystemExit:
+        os._exit(130)
