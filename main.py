@@ -76,13 +76,17 @@ class LTRCommunity(Community):
                 ranked_result_ids.append(selected_id)
                 remaining_results.pop(selected_id)
 
-            # For result #1, simulate 100 clicks, for result #2, simulate 90 clicks, etc.
+            # For result #1, e.g., simulate sim_epochs=100 clicks, for result #2, simulate 90 clicks, etc.
             selected_results = []
+            sim_epochs = int(input(f"\r{fmt('Number of epochs on #1 (e.g., 1000)', 'yellow')}: "))
+            sim_epoch_diff = int(input(f"\r{fmt('Deduction per rank (e.g., 100)', 'yellow')}: "))
             for i in range(len(ranked_result_ids)):
-                selected_results += [list(results.keys()).index(ranked_result_ids[i])] * (100 - i*10)
+                selected_results += [list(results.keys()).index(ranked_result_ids[i])] * (sim_epochs - i*sim_epoch_diff)
             random.shuffle(selected_results)
             
-            print(fmt('Training model on simulation...', 'gray'))
+            n_epochs = int(len(results)/2 * (2 * sim_epochs + (len(results)-1) * (-sim_epoch_diff)))
+            print(fmt(f'Training model on simulation ({n_epochs} epochs)...', 'gray'))
+
             with silence():
                 for res in selected_results:
                     self.ltr.on_result_selected(query, ranked_result_ids, res)
