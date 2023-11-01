@@ -18,8 +18,8 @@ from ipv8.util import run_forever
 from ipv8_service import IPv8
 
 from simple_term_menu import TerminalMenu
-from ltr import LTR
-from utils import *
+from p2p_ol2r.ltr import LTR
+from p2p_ol2r.utils import *
 
 # Enhance normal dataclasses for IPv8 (see the serialization documentation)
 dataclass = overwrite_dataclass(dataclass)
@@ -53,7 +53,7 @@ class LTRCommunity(Community):
 
     def started(self) -> None:
         print('Indexing (please wait)...')
-        self.ltr = LTR(args.quantize)
+        self.ltr = LTR(args.k, args.quantize)
 
         if args.simulation:
             print(fmt('Enter query for simulation', 'yellow'))
@@ -61,7 +61,7 @@ class LTRCommunity(Community):
 
             print(fmt('Consecutively select results for simulation from best to worst', 'yellow'))
 
-            ranked_result_ids = []
+            ranked_result_ids = [] # selected results ordered by rank (best to worst)
             results = self.ltr.query(query)
             remaining_results = results.copy()
 
@@ -72,7 +72,7 @@ class LTRCommunity(Community):
                     selected_res = terminal_menu.show()
 
                 selected_id, selected_title = list(remaining_results.items())[selected_res]
-                print(f'#{rank+1}: {selected_title}')
+                print(fmt(f'#{rank+1}', 'blue') + f': {selected_title}')
                 ranked_result_ids.append(selected_id)
                 remaining_results.pop(selected_id)
 
@@ -81,18 +81,21 @@ class LTRCommunity(Community):
             sim_epochs = int(input(f"\r{fmt('Number of epochs on #1 (e.g., 1000)', 'yellow')}: "))
             sim_epoch_diff = int(input(f"\r{fmt('Deduction per rank (e.g., 100)', 'yellow')}: "))
             for i in range(len(ranked_result_ids)):
+                if sim_epoch_diff <= 0: break
                 selected_results += [list(results.keys()).index(ranked_result_ids[i])] * (sim_epochs - i*sim_epoch_diff)
             random.shuffle(selected_results)
             
-            n_epochs = int(len(results)/2 * (2 * sim_epochs + (len(results)-1) * (-sim_epoch_diff)))
-            print(fmt(f'Training model on simulation ({n_epochs} epochs)...', 'gray'))
+            print(fmt(f'Training model on simulation ({len(selected_results)} epochs)...', 'gray'))
 
             with silence():
                 for res in selected_results:
                     self.ltr.on_result_selected(query, ranked_result_ids, res)
+            
+            print(fmt(f'nDCG: {round(ndcg(ranked_result_ids, list(results.keys())), 3)}', 'yellow'))
 
         async def app() -> None:
             threading.Thread(target=self.input_thread, daemon=True).start()
+
             while True:
                 self.ready_for_input.set()
                 while self.input_queue.empty():
@@ -100,6 +103,7 @@ class LTRCommunity(Community):
 
                 query = self.input_queue.get()
                 results = self.ltr.query(query)
+
                 terminal_menu = TerminalMenu(results.values())
                 selected_res = terminal_menu.show()
                 if selected_res is None: continue
@@ -144,14 +148,16 @@ async def start_communities() -> None:
     await run_forever()
 
 parser = argparse.ArgumentParser(prog='Peer-to-Peer Online Learning-to-Rank')
-parser.add_argument('id')
+parser.add_argument('id', help='identity of this peer')
+parser.add_argument('-k', type=int, default=5, help='number of results per query', metavar='N')
 parser.add_argument('-q', '--quantize', action='store_true', help='enable quantization-aware training')
 parser.add_argument('-s', '--simulation', action='store_true', help='perform simulation of user clicks on a set query')
 args = parser.parse_args()
+if args.k < 1: parser.error("The value of -k must be at least 1")
 
 try:
     run(start_communities())
-except KeyboardInterrupt as e:
+except KeyboardInterrupt:
     print('\nProgram terminated by user.')
     try:
         sys.exit(130)

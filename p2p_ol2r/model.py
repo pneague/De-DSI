@@ -4,7 +4,7 @@ import torch.nn as nn
 import numpy as np
 from collections import OrderedDict
 from torch.ao.quantization import get_default_qat_qconfig, prepare_qat, fuse_modules, QuantStub, DeQuantStub
-from utils import *
+from .utils import *
 
 class LTRModel:
     
@@ -49,7 +49,7 @@ class LTRModel:
 
         return buffer
 
-    def make_input(self, query_vector, sup_doc_vector, inf_doc_vector):
+    def make_input(self, query_vector: np.ndarray, sup_doc_vector: np.ndarray, inf_doc_vector: np.ndarray):
         """
         Make (query, document-pair) input for model.
         """

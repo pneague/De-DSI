@@ -5,7 +5,7 @@ import torch
 from txtai.embeddings import Embeddings
 from itertools import combinations
 from operator import itemgetter
-from model import LTRModel
+from .model import LTRModel
 import warnings
 warnings.filterwarnings('ignore', category=UserWarning, message='TypedStorage is deprecated')
 
@@ -17,15 +17,16 @@ class LTR(LTRModel):
         metadata: mapping of article uid to title
         embeddings_map: mapping of article uid to feature vector
         embeddings: txtai embeddings model
-        results: local cache of query => results
+        k: number of results to show
     """
     metadata = {}
     embeddings_map = {}
     embeddings = None
-    results = {}
+    number_of_results = 5
 
-    def __init__(self, quantize: bool):
+    def __init__(self, number_of_results: int, quantize: bool):
         super().__init__(quantize)
+        self.number_of_results = number_of_results
 
         with open('data/metadata.csv', 'r') as f:
             reader = csv.reader(f)
@@ -46,9 +47,9 @@ class LTR(LTRModel):
         self.embeddings = Embeddings({ 'path': 'allenai/specter' })
         self.embeddings.load('data/embeddings_index.tar.gz')
 
-    def _get_results(self, query: str) -> list[str]:
+    def _get_result_pairs(self, query: str) -> list[str]:
         """
-        Get results for a query from the local cache, or from the embeddings model.
+        TODO: describe function
 
         Args:
             query: query string
@@ -56,7 +57,8 @@ class LTR(LTRModel):
         Returns:
             List of result IDs
         """
-        return self.results[query] if query in self.results else [x for x, _ in self.embeddings.search(query, 5)]
+        results = [x for x, _ in self.embeddings.search(query, self.number_of_results)]
+        return list(combinations(results, 2))
 
     def embed(self, x: str) -> list[float]:
         """
@@ -109,9 +111,9 @@ class LTR(LTRModel):
             Dict of result IDs to titles ordered by their ranking
         """
         query_vector = self.embed(query)
-        results = self._get_results(query)
-        results_combs = list(combinations(results, 2))
+        results_combs = self._get_result_pairs(query)
         results_scores = {}
+
         for result_pair in results_combs:
             vec1 = self.embeddings_map[result_pair[0]]
             vec2 = self.embeddings_map[result_pair[1]]
@@ -124,8 +126,8 @@ class LTR(LTRModel):
             results_scores[k] = results_scores.get(k, 0) + (1 - is_sup)
 
         results_scores = dict(sorted(results_scores.items(), key=itemgetter(1), reverse=True))
-        ranked_result_ids = [k for k, _ in results_scores.items()]
-        return {res_id: self.metadata[res_id] for res_id in ranked_result_ids}
+        ranked_results = {res_id: self.metadata[res_id] for res_id, _ in results_scores.items()}
+        return ranked_results
     
     def on_result_selected(self, query: str, results: list[str], selected_res: int):
         """
@@ -135,7 +137,7 @@ class LTR(LTRModel):
         self.train(*self.gen_train_data(query, results, selected_res), 1)
 
         query_vector = self.embed(query)
-        results_combs = list(combinations(self._get_results(query), 2))
+        results_combs = self._get_result_pairs(query)
         results_scores = {}
         for result_pair in results_combs:
             vec1 = self.embeddings_map[result_pair[0]]
