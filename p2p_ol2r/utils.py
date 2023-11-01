@@ -58,7 +58,7 @@ def ndcg(expected: list[str], actual: list[str], form="linear"):
     if form == "linear":
         idcg = np.sum(rel_true[:p] * discount)
         dcg = np.sum(rel_pred[:p] * discount)
-    elif form == "exponential" or form == "exp":
+    elif form == "exp":
         idcg = np.sum([2**x - 1 for x in rel_true[:p]] * discount)
         dcg = np.sum([2**x - 1 for x in rel_pred[:p]] * discount)
     else:
