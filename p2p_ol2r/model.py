@@ -74,7 +74,6 @@ class LTRModel:
                 ]
             print(fmt(f'\rEpoch [{epoch + 1}/{num_epochs}], Loss: {(sum(losses) / len(losses)):.4f}', 'gray'), end='')
         print()
-        self.model.eval()
 
     def apply_updates(self, update_model):
         if self._quantize:

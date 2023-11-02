@@ -114,16 +114,16 @@ class LTR(LTRModel):
         results_combs = self._get_result_pairs(query)
         results_scores = {}
 
-        for result_pair in results_combs:
-            vec1 = self.embeddings_map[result_pair[0]]
-            vec2 = self.embeddings_map[result_pair[1]]
-            is_sup = torch.round(
-                    self.model(torch.from_numpy(self.make_input(query_vector, vec1, vec2)))
-                ).item()
-            k = result_pair[0]
-            results_scores[k] = results_scores.get(k, 0) + is_sup
-            k = result_pair[1]
-            results_scores[k] = results_scores.get(k, 0) + (1 - is_sup)
+        self.model.eval()
+        with torch.no_grad():
+            for result_pair in results_combs:
+                vec1 = self.embeddings_map[result_pair[0]]
+                vec2 = self.embeddings_map[result_pair[1]]
+                prob_1_over_2 = self.model(torch.from_numpy(self.make_input(query_vector, vec1, vec2))).item()
+                k = result_pair[0]
+                results_scores[k] = results_scores.get(k, 0) + prob_1_over_2
+                k = result_pair[1]
+                results_scores[k] = results_scores.get(k, 0) + (1 - prob_1_over_2)
 
         results_scores = dict(sorted(results_scores.items(), key=itemgetter(1), reverse=True))
         ranked_results = {res_id: self.metadata[res_id] for res_id, _ in results_scores.items()}
@@ -135,19 +135,3 @@ class LTR(LTRModel):
         and updates the local cache of results based on the updated model.
         """
         self.train(*self.gen_train_data(query, results, selected_res), 1)
-
-        query_vector = self.embed(query)
-        results_combs = self._get_result_pairs(query)
-        results_scores = {}
-        for result_pair in results_combs:
-            vec1 = self.embeddings_map[result_pair[0]]
-            vec2 = self.embeddings_map[result_pair[1]]
-            is_sup = torch.round(
-                    self.model(torch.from_numpy(self.make_input(query_vector, vec1, vec2)))
-                ).item()
-            k = result_pair[0]
-            results_scores[k] = results_scores.get(k, 0) + is_sup
-            k = result_pair[1]
-            results_scores[k] = results_scores.get(k, 0) + (1 - is_sup)
-
-        results_scores = dict(sorted(results_scores.items(), key=itemgetter(1), reverse=True))

@@ -92,7 +92,6 @@ class LTRCommunity(Community):
                     self.ltr.on_result_selected(query, ranked_result_ids, res)
             
             inferred_ranking = list(self.ltr.query(query).keys())
-            print(ranked_result_ids, inferred_ranking)
             print(fmt(f'nDCG: {round(ndcg(ranked_result_ids, inferred_ranking), 3)}', 'yellow'))
             print(fmt(f'Random nDCG: {round(ndcg(random.sample(ranked_result_ids, len(ranked_result_ids)), inferred_ranking), 3)}', 'yellow'))
 
