@@ -5,6 +5,7 @@ import numpy as np
 from collections import OrderedDict
 from torch.ao.quantization import get_default_qat_qconfig, prepare_qat, fuse_modules, QuantStub, DeQuantStub
 from .utils import *
+from itertools import product
 
 class LTRModel:
     
@@ -12,13 +13,11 @@ class LTRModel:
         self._quantize = quantize
 
         layers = [
-            ('lin1', nn.Linear(3*768, 256)),
+            ('lin1', nn.Linear(3*768, 512)),
             ('relu1', nn.ReLU()),
-            ('lin2', nn.Linear(256, 256)),
+            ('lin2', nn.Linear(512, 512)),
             ('relu2', nn.ReLU()),
-            ('lin3', nn.Linear(256, 256)),
-            ('relu3', nn.ReLU()),
-            ('lin4', nn.Linear(256, 1)),
+            ('lin4', nn.Linear(512, 1)),
             ('sigmoid', nn.Sigmoid())
         ]
 
@@ -29,12 +28,12 @@ class LTRModel:
             self.model.eval()
             self.model.qconfig = get_default_qat_qconfig('onednn')
             self.model = fuse_modules(self.model,
-                [['lin1', 'relu1'], ['lin2', 'relu2'], ['lin3', 'relu3']])
+                [['lin1', 'relu1'], ['lin2', 'relu2']])
             self.model = prepare_qat(self.model.train())
         else:
             self.model = nn.Sequential(OrderedDict(layers))
 
-        self._criterion = nn.BCELoss()
+        self._criterion = nn.BCEWithLogitsLoss()
         self._optimizer = torch.optim.SGD(self.model.parameters(), lr=0.001)
 
     def serialize_model(self) -> io.BytesIO:

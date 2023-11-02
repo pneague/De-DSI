@@ -49,13 +49,13 @@ class LTR(LTRModel):
 
     def _get_result_pairs(self, query: str) -> list[str]:
         """
-        TODO: describe function
+        Retrieve top-k results from semantic search and generate all possible combination pairs.
 
         Args:
             query: query string
 
         Returns:
-            List of result IDs
+            List of combination pairs of result IDs
         """
         results = [x for x, _ in self.embeddings.search(query, self.number_of_results)]
         return list(combinations(results, 2))

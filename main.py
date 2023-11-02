@@ -91,7 +91,10 @@ class LTRCommunity(Community):
                 for res in selected_results:
                     self.ltr.on_result_selected(query, ranked_result_ids, res)
             
-            print(fmt(f'nDCG: {round(ndcg(ranked_result_ids, list(results.keys())), 3)}', 'yellow'))
+            inferred_ranking = list(self.ltr.query(query).keys())
+            print(ranked_result_ids, inferred_ranking)
+            print(fmt(f'nDCG: {round(ndcg(ranked_result_ids, inferred_ranking), 3)}', 'yellow'))
+            print(fmt(f'Random nDCG: {round(ndcg(random.sample(ranked_result_ids, len(ranked_result_ids)), inferred_ranking), 3)}', 'yellow'))
 
         async def app() -> None:
             threading.Thread(target=self.input_thread, daemon=True).start()
