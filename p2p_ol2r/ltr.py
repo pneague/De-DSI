@@ -125,6 +125,7 @@ class LTR(LTRModel):
                 k = result_pair[1]
                 results_scores[k] = results_scores.get(k, 0) + (1 - prob_1_over_2)
 
+        # aggregating results by summing the probabilities of being superior
         results_scores = dict(sorted(results_scores.items(), key=itemgetter(1), reverse=True))
         ranked_results = {res_id: self.metadata[res_id] for res_id, _ in results_scores.items()}
         return ranked_results

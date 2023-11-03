@@ -34,7 +34,7 @@ class LTRModel:
             self.model = nn.Sequential(OrderedDict(layers))
 
         self._criterion = nn.BCEWithLogitsLoss()
-        self._optimizer = torch.optim.SGD(self.model.parameters(), lr=0.001)
+        self._optimizer = torch.optim.SGD(self.model.parameters(), lr=0.01)
 
     def serialize_model(self) -> io.BytesIO:
         buffer = io.BytesIO()
@@ -48,7 +48,12 @@ class LTRModel:
 
         return buffer
 
-    def make_input(self, query_vector: np.ndarray, sup_doc_vector: np.ndarray, inf_doc_vector: np.ndarray):
+    def make_input(
+            self, 
+            query_vector: np.ndarray, 
+            sup_doc_vector: np.ndarray, 
+            inf_doc_vector: np.ndarray
+        ) -> np.ndarray:
         """
         Make (query, document-pair) input for model.
         """
@@ -62,7 +67,7 @@ class LTRModel:
         self._optimizer.step()
         return loss.item()
 
-    def train(self, pos_train_data, neg_train_data, num_epochs: int):
+    def train(self, pos_train_data: np.ndarray, neg_train_data: np.ndarray, num_epochs: int):
         self.model.train()
 
         print(fmt(f'Epoch [0/{num_epochs}], Loss: n/a', 'gray'), end='')
