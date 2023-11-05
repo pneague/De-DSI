@@ -87,7 +87,7 @@ class LTRModel:
         Returns:
             float: The loss value obtained during the training step.
         """
-        output = self.model(train_data)
+        output = self.model(torch.from_numpy(train_data))
         if self.cfg.single_output:
             label_tensor = torch.tensor([float(label)])
         else:

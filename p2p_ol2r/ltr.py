@@ -90,8 +90,8 @@ class LTR(LTRModel):
             self.embeddings_map[results[selected_res]]
         ) for i in range(len(results)) if i != selected_res]
 
-        pos_train_data = torch.from_numpy(np.array(pos_train_data))
-        neg_train_data = torch.from_numpy(np.array(neg_train_data))
+        pos_train_data = np.array(pos_train_data)
+        neg_train_data = np.array(neg_train_data)
 
         return pos_train_data, neg_train_data
     
@@ -139,4 +139,3 @@ class LTR(LTRModel):
         and updates the local cache of results based on the updated model.
         """
         self.train(*self.gen_train_data(query, results, selected_res))
-        

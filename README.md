@@ -57,11 +57,7 @@ Model is stored in memory; you restart the app, you start from scratch.
 
 ### Advanced Options
 
-- Use `-k <int>` to specify the number of relevant top-k results used for ranking.
-
-- Use `-q` to enable quantization of the model.
-In our experiments, this yielded a data reduction of 4x when transferring the model,
-however, at the cost of performance speed and accuracy.
-
 - Use `-s` to perform a simulation of user clicks on a set query
 (e.g., 100 clicks on result #1, 90 clicks on result #2, etc.).
+
+- Various hyperparameters can be changed in [`config.ini`](./config.ini).
