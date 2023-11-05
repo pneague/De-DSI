@@ -9,6 +9,7 @@ import time
 import argparse
 import random
 import torch
+from configparser import ConfigParser
 from ipv8.community import Community, CommunitySettings
 from ipv8.configuration import ConfigBuilder, Strategy, WalkerDefinition, default_bootstrap_defs
 from ipv8.lazy_community import lazy_wrapper
@@ -20,6 +21,7 @@ from ipv8_service import IPv8
 from simple_term_menu import TerminalMenu
 from p2p_ol2r.ltr import LTR
 from p2p_ol2r.utils import *
+from p2p_ol2r.config import Config
 
 # Enhance normal dataclasses for IPv8 (see the serialization documentation)
 dataclass = overwrite_dataclass(dataclass)
@@ -37,7 +39,7 @@ class LTRCommunity(Community):
 
     def __init__(self, settings: CommunitySettings) -> None:
         super().__init__(settings)
-        if args.quantize:
+        if cfg.quantize:
             self.community_id = self.community_id[:-1] + bytes([0x01])
         self.add_message_handler(UpdateModel, self.on_message)
         self.input_queue = queue.Queue()
@@ -53,7 +55,7 @@ class LTRCommunity(Community):
 
     def started(self) -> None:
         print('Indexing (please wait)...')
-        self.ltr = LTR(args.k, args.quantize)
+        self.ltr = LTR(cfg)
 
         if args.simulation:
             print(fmt('Enter query for simulation', 'yellow'))
@@ -149,13 +151,15 @@ async def start_communities() -> None:
                 extra_communities={'LTRCommunity': LTRCommunity}).start()
     await run_forever()
 
+
 parser = argparse.ArgumentParser(prog='Peer-to-Peer Online Learning-to-Rank')
 parser.add_argument('id', help='identity of this peer')
-parser.add_argument('-k', type=int, default=5, help='number of results per query', metavar='N')
-parser.add_argument('-q', '--quantize', action='store_true', help='enable quantization-aware training')
 parser.add_argument('-s', '--simulation', action='store_true', help='perform simulation of user clicks on a set query')
 args = parser.parse_args()
-if args.k < 1: parser.error("The value of -k must be at least 1")
+
+cfgParser = ConfigParser()
+cfgParser.read('config.ini')
+cfg = Config(cfgParser['DEFAULT'])
 
 try:
     run(start_communities())

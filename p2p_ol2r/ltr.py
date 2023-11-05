@@ -6,6 +6,7 @@ from txtai.embeddings import Embeddings
 from itertools import combinations
 from operator import itemgetter
 from .model import LTRModel
+from .config import Config
 import warnings
 warnings.filterwarnings('ignore', category=UserWarning, message='TypedStorage is deprecated')
 
@@ -17,16 +18,13 @@ class LTR(LTRModel):
         metadata: mapping of article uid to title
         embeddings_map: mapping of article uid to feature vector
         embeddings: txtai embeddings model
-        k: number of results to show
     """
     metadata = {}
     embeddings_map = {}
     embeddings = None
-    number_of_results = 5
 
-    def __init__(self, number_of_results: int, quantize: bool):
-        super().__init__(quantize)
-        self.number_of_results = number_of_results
+    def __init__(self, cfg: Config):
+        super().__init__(cfg)
 
         with open('data/metadata.csv', 'r') as f:
             reader = csv.reader(f)
@@ -57,7 +55,7 @@ class LTR(LTRModel):
         Returns:
             List of combination pairs of result IDs
         """
-        results = [x for x, _ in self.embeddings.search(query, self.number_of_results)]
+        results = [x for x, _ in self.embeddings.search(query, self.cfg.number_of_results)]
         return list(combinations(results, 2))
 
     def embed(self, x: str) -> list[float]:
@@ -119,11 +117,16 @@ class LTR(LTRModel):
             for result_pair in results_combs:
                 vec1 = self.embeddings_map[result_pair[0]]
                 vec2 = self.embeddings_map[result_pair[1]]
-                prob_1_over_2 = self.model(torch.from_numpy(self.make_input(query_vector, vec1, vec2))).item()
+
+                _, v = self.infer(query_vector, vec1, vec2)
+                prob_1_over_2 = v[0] if type(v) == tuple else v
+                prob_2_over_1 = v[1] if type(v) == tuple else 1-v
+
+                
                 k = result_pair[0]
                 results_scores[k] = results_scores.get(k, 0) + prob_1_over_2
                 k = result_pair[1]
-                results_scores[k] = results_scores.get(k, 0) + (1 - prob_1_over_2)
+                results_scores[k] = results_scores.get(k, 0) + prob_2_over_1
 
         # aggregating results by summing the probabilities of being superior
         results_scores = dict(sorted(results_scores.items(), key=itemgetter(1), reverse=True))
@@ -135,4 +138,5 @@ class LTR(LTRModel):
         Retrains the model with the selected result as the most relevant,
         and updates the local cache of results based on the updated model.
         """
-        self.train(*self.gen_train_data(query, results, selected_res), 1)
+        self.train(*self.gen_train_data(query, results, selected_res))
+        

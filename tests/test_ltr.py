@@ -1,20 +1,17 @@
 import unittest
-import logging
 from p2p_ol2r.ltr import *
+from tests import cfg
 
 class TestGenTrainData(unittest.TestCase):
 
-    ltr = LTR(5, False)
+    ltr = LTR(cfg)
 
     def test_lengths(self):
         query = 'molecular tumor'
-        results = [x for x, _ in self.ltr.embeddings.search(query, self.ltr.number_of_results)]
+        results = [x for x, _ in self.ltr.embeddings.search(query, cfg.number_of_results)]
         pos, neg = self.ltr.gen_train_data(query, results, 0)
-        
-        log = logging.getLogger( "TestGenTrainData" )
-        log.debug(pos)
 
-        self.assertEqual(len(pos), self.ltr.number_of_results - 1)
+        self.assertEqual(len(pos), cfg.number_of_results - 1)
         self.assertEqual(len(pos), len(neg))
 
 if __name__ == "__main__":
