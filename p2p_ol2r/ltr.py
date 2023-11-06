@@ -45,6 +45,18 @@ class LTR(LTRModel):
         self.embeddings = Embeddings({ 'path': 'allenai/specter' })
         self.embeddings.load('data/embeddings_index.tar.gz')
 
+    def _get_results(self, query: str) -> list[str]:
+            """
+            Returns an unordered list of relevant search results for the given query.
+
+            Args:
+                query: The search query.
+
+            Returns:
+                A list of document IDs
+            """
+            return [x for x, _ in self.embeddings.search(query, self.cfg.number_of_results)]
+
     def _get_result_pairs(self, query: str) -> list[str]:
         """
         Retrieve top-k results from semantic search and generate all possible combination pairs.
@@ -89,9 +101,39 @@ class LTR(LTRModel):
     def result_ids_to_titles(self, results: list[str]) -> list[str]:
         return [self.metadata[x] for x in results]
     
-    def query(self, query: str) -> dict[str, str]:
+    def rank_results(self, query: np.ndarray, result_ids: list[str]) -> list[str]:
         """
         Determine ranking of results based on pairwise comparisons on the model.
+
+        Args:
+            query: The query to rank the results against.
+            result_ids: The list of doc IDs to rank.
+
+        Returns:
+            The list of result IDs sorted by their relevance to the query.
+        """
+        result_pairs = list(combinations(result_ids, 2))
+        result_scores = {}
+
+        # aggregate inferred probabilities for each result pair
+        for (d1_id, d2_id) in result_pairs:
+            d1 = self.embeddings_map[d1_id]
+            d2 = self.embeddings_map[d2_id]
+            _, v = self.infer(ModelInput(query, d1, d2))
+            prob_1_over_2 = v[0] if type(v) == tuple else v
+            prob_2_over_1 = v[1] if type(v) == tuple else 1-v
+
+            result_scores[d1_id] = result_scores.get(d1_id, 0) + prob_1_over_2
+            result_scores[d2_id] = result_scores.get(d2_id, 0) + prob_2_over_1
+
+        # order result scores
+        result_scores = dict(sorted(result_scores.items(), key=itemgetter(1), reverse=True))
+
+        return [res_id for res_id, _ in result_scores.items()]
+    
+    def query(self, query: str) -> dict[str, str]:
+        """
+        Returns ranked results for the given query.
 
         Args:
             query: query string
@@ -100,29 +142,9 @@ class LTR(LTRModel):
             Dict of result IDs to titles ordered by their ranking
         """
         query_vector = self.embed(query)
-        results_combs = self._get_result_pairs(query)
-        results_scores = {}
-
-        self.model.eval()
-        with torch.no_grad():
-            for result_pair in results_combs:
-                vec1 = self.embeddings_map[result_pair[0]]
-                vec2 = self.embeddings_map[result_pair[1]]
-
-                _, v = self.infer(ModelInput(query_vector, vec1, vec2))
-                prob_1_over_2 = v[0] if type(v) == tuple else v
-                prob_2_over_1 = v[1] if type(v) == tuple else 1-v
-
-                
-                k = result_pair[0]
-                results_scores[k] = results_scores.get(k, 0) + prob_1_over_2
-                k = result_pair[1]
-                results_scores[k] = results_scores.get(k, 0) + prob_2_over_1
-
-        # aggregating results by summing the probabilities of being superior
-        results_scores = dict(sorted(results_scores.items(), key=itemgetter(1), reverse=True))
-        ranked_results = {res_id: self.metadata[res_id] for res_id, _ in results_scores.items()}
-        return ranked_results
+        docs = self._get_results(query)
+        ranked_results = self.rank_results(query_vector, docs)
+        return {id: self.metadata[id] for id in ranked_results}
     
     def on_result_selected(self, query: str, results: list[str], selected_res: int):
         """

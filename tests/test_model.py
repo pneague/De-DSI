@@ -51,6 +51,8 @@ class TestModel(unittest.TestCase):
         self.assertFalse(res)
     
     def test_how_much_it_takes(self):
+        # We test 100 inputs of docs[0] > docs[1] vs. 90 inputs of docs[1] > docs[0], 
+        # expecting docs[0] still to be ranked higher than docs[1].
         ltr_model, _, q, docs = setUp()
         train_data = [ModelInput(q, docs[0], docs[1])] * 100
         train_data.extend([ModelInput(q, docs[1], docs[0])] * 90)
@@ -61,7 +63,7 @@ class TestModel(unittest.TestCase):
         self.assertFalse(res)
         
 
-    @unittest.skip("the ultimate test - doesn't work yet 🥲")
+    #@unittest.skip("the ultimate test - doesn't work yet 🥲")
     def test_full_ranking(self):
         ltr_model, k, q, docs = setUp()
 
@@ -70,33 +72,17 @@ class TestModel(unittest.TestCase):
         for i in range(k-1):
             # docs[i] to be above all others
             i_over_all = [ModelInput(q, docs[i], docs[j]) for j in range(k) if i != j]
-            epochs = max(0, k*10 - i*10)
+            epochs = max(0, k*10 - i*10) # with k=9 and epochs+100, this test will fail
             train_data.extend(i_over_all * epochs)
         
         with silence(): ltr_model.train(train_data)
 
-        # expected: docs[0] > docs[1] > ... > docs[k-1]
         for i in range(k-1):
-            print(f"docs[{i}] > docs[{i+1}]")
-            res, values = ltr_model.infer(ModelInput(q, docs[i], docs[i+1]))
-            print(values)
-            self.assertTrue(res)
-
-            #res, values = ltr_model.infer(ModelInput(q, docs[i+1], docs[i]))
-            #print(values)
-            #self.assertFalse(res)
-
-        # for i in range(k-1):
-        #     for j in range(i+1, k):
-        #         # self.assertGreater(
-        #         #     ltr_model.model(torch.from_numpy(mki(q, docs[j], docs[i]))).item(),
-        #         #     0.5
-        #         # )
-        #         self.assertLess(
-        #             ltr_model.model(torch.from_numpy(mki(q, docs[j], docs[i]))).item(),
-        #             0.5
-        #         )
-        #         break
+            for j in range(i+1, k):
+                res, _ = ltr_model.infer(ModelInput(q, docs[i], docs[j]))
+                self.assertTrue(res)
+                res, _ = ltr_model.infer(ModelInput(q, docs[j], docs[i]))
+                self.assertFalse(res)
 
 if __name__ == "__main__":
     unittest.main()

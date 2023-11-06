@@ -8,7 +8,6 @@ import queue
 import time
 import argparse
 import torch
-import random
 from configparser import ConfigParser
 from ipv8.community import Community, CommunitySettings
 from ipv8.configuration import ConfigBuilder, Strategy, WalkerDefinition, default_bootstrap_defs
@@ -94,7 +93,6 @@ class LTRCommunity(Community):
             
             inferred_ranking = list(self.ltr.query(query).keys())
             print(fmt(f'nDCG: {round(ndcg(ranked_result_ids, inferred_ranking), 3)}', 'yellow'))
-            print(fmt(f'Random nDCG: {round(ndcg(random.sample(ranked_result_ids, len(ranked_result_ids)), inferred_ranking), 3)}', 'yellow'))
 
         async def app() -> None:
             threading.Thread(target=self.input_thread, daemon=True).start()

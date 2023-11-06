@@ -115,6 +115,10 @@ class LTRModel:
     def train(self, true_train_data: list[ModelInput], epochs: int = 1):
         """
         Trains the model on the given training data and its inverse (if i>j is true then j>i must be false).
+
+        Args:
+            true_train_data: The training data to train on to be classified as true.
+            epochs: The number of epochs to train each training data item on.
         """
         self.model.train()
         shuffle(true_train_data)
@@ -134,9 +138,9 @@ class LTRModel:
         Infer the relative relevance of two documents given a query from the model.
 
         Args:
-            query (np.ndarray): The query vector.
-            sup_doc (np.ndarray): The supposedly superior document vector.
-            inf_doc (np.ndarray): The supposedly inferior document vector.
+            query: The query vector.
+            sup_doc: The supposedly superior document vector.
+            inf_doc: The supposedly inferior document vector.
 
         Returns:
             bool: True if the superior document is more relevant than the inferior document, False otherwise.
