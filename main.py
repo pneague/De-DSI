@@ -7,8 +7,8 @@ import threading
 import queue
 import time
 import argparse
-import random
 import torch
+import random
 from configparser import ConfigParser
 from ipv8.community import Community, CommunitySettings
 from ipv8.configuration import ConfigBuilder, Strategy, WalkerDefinition, default_bootstrap_defs
@@ -85,7 +85,6 @@ class LTRCommunity(Community):
             for i in range(len(ranked_result_ids)):
                 if sim_epoch_diff <= 0: break
                 selected_results += [list(results.keys()).index(ranked_result_ids[i])] * (sim_epochs - i*sim_epoch_diff)
-            random.shuffle(selected_results)
             
             print(fmt(f'Training model on simulation ({len(selected_results)} epochs)...', 'gray'))
 

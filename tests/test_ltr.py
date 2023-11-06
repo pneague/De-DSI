@@ -9,10 +9,8 @@ class TestGenTrainData(unittest.TestCase):
     def test_lengths(self):
         query = 'molecular tumor'
         results = [x for x, _ in self.ltr.embeddings.search(query, cfg.number_of_results)]
-        pos, neg = self.ltr.gen_train_data(query, results, 0)
-
-        self.assertEqual(len(pos), cfg.number_of_results - 1)
-        self.assertEqual(len(pos), len(neg))
+        train_data = self.ltr.gen_train_data(query, results, 0)
+        self.assertEqual(len(train_data), cfg.number_of_results - 1)
 
 if __name__ == "__main__":
     unittest.main()

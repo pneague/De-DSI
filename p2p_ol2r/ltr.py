@@ -5,7 +5,7 @@ import torch
 from txtai.embeddings import Embeddings
 from itertools import combinations
 from operator import itemgetter
-from .model import LTRModel
+from .model import LTRModel, ModelInput
 from .config import Config
 import warnings
 warnings.filterwarnings('ignore', category=UserWarning, message='TypedStorage is deprecated')
@@ -64,9 +64,9 @@ class LTR(LTRModel):
         """
         return self.embeddings.batchtransform([(None, x, None)])[0]
 
-    def gen_train_data(self, query: str, results: list[str], selected_res: int = None) -> tuple[np.ndarray, np.ndarray]:
+    def gen_train_data(self, query: str, results: list[str], selected_res: int = None) -> list[ModelInput]:
         """
-        Generate training data. (We use sup(erior) and inf(erior) to denote relative relevance.)
+        Generate training data to be classified as _true_.
 
         Args:
             query: query string
@@ -74,26 +74,17 @@ class LTR(LTRModel):
             selected_res: index of selected result
         
         Returns:
-            tuple of (positive training data, negative training data)
+            true training data
         """
         query_vector = self.embed(query)
         
-        pos_train_data = [self.make_input(
+        pos_train_data = [ModelInput(
             query_vector,
             self.embeddings_map[results[selected_res]],
             self.embeddings_map[results[i]]
         ) for i in range(len(results)) if i != selected_res]
 
-        neg_train_data = [self.make_input(
-            query_vector,
-            self.embeddings_map[results[i]],
-            self.embeddings_map[results[selected_res]]
-        ) for i in range(len(results)) if i != selected_res]
-
-        pos_train_data = np.array(pos_train_data)
-        neg_train_data = np.array(neg_train_data)
-
-        return pos_train_data, neg_train_data
+        return pos_train_data
     
     def result_ids_to_titles(self, results: list[str]) -> list[str]:
         return [self.metadata[x] for x in results]
@@ -118,7 +109,7 @@ class LTR(LTRModel):
                 vec1 = self.embeddings_map[result_pair[0]]
                 vec2 = self.embeddings_map[result_pair[1]]
 
-                _, v = self.infer(query_vector, vec1, vec2)
+                _, v = self.infer(ModelInput(query_vector, vec1, vec2))
                 prob_1_over_2 = v[0] if type(v) == tuple else v
                 prob_2_over_1 = v[1] if type(v) == tuple else 1-v
 
@@ -135,7 +126,6 @@ class LTR(LTRModel):
     
     def on_result_selected(self, query: str, results: list[str], selected_res: int):
         """
-        Retrains the model with the selected result as the most relevant,
-        and updates the local cache of results based on the updated model.
+        Retrains the model with the selected result as the most relevant.
         """
-        self.train(*self.gen_train_data(query, results, selected_res))
+        self.train(self.gen_train_data(query, results, selected_res))

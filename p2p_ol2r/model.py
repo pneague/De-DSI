@@ -5,8 +5,33 @@ import numpy as np
 from collections import OrderedDict
 import torch.nn.functional as F
 from torch.ao.quantization import get_default_qat_qconfig, prepare_qat, fuse_modules, QuantStub, DeQuantStub
+from random import shuffle
 from .utils import *
 from .config import Config
+
+class ModelInput(torch.Tensor):
+    """
+    A tensor representing the input to the model (the query-doc-doc triplet).
+    """
+    @staticmethod
+    def __new__(cls, query_vector: np.ndarray, sup_doc_vector: np.ndarray, inf_doc_vector: np.ndarray):
+        input_array = np.concatenate([query_vector, sup_doc_vector, inf_doc_vector])
+        tensor = torch.as_tensor(input_array, dtype=torch.float32)
+        obj = torch.Tensor._make_subclass(cls, tensor)
+        obj.query = query_vector
+        obj.sup_doc = sup_doc_vector
+        obj.inf_doc = inf_doc_vector
+        return obj
+    
+    def inverse(self):
+        """
+        Returns the inverse of the model input (i.e. the same input with the superior and inferior document swapped).
+        """
+        return ModelInput(self.query, self.inf_doc, self.sup_doc)
+
+# Alias for a labeled model input to be used for training
+LabeledModelInput = tuple[ModelInput, bool]
+
 class LTRModel:
     
     def __init__(self, config: Config) -> None:
@@ -65,29 +90,18 @@ class LTRModel:
         torch.save(model, buffer)
         return buffer
 
-    def make_input(
-            self, 
-            query_vector: np.ndarray, 
-            sup_doc_vector: np.ndarray, 
-            inf_doc_vector: np.ndarray
-        ) -> np.ndarray:
-        """
-        Make (query, document-pair) input for model.
-        """
-        return np.array([query_vector, sup_doc_vector, inf_doc_vector], dtype=np.float32).flatten()
-
-    def _train_step(self, train_data: np.ndarray, label: bool) -> float:
+    def _train_step(self, model_input: ModelInput, label: bool) -> float:
         """
         Performs a single training step on the given input data and label.
 
         Args:
-            train_data (np.ndarray): The input data to train on.
-            label (bool): The label associated with the input data.
+            model_input: The input data to train on.
+            label: The label associated with the input data.
 
         Returns:
             float: The loss value obtained during the training step.
         """
-        output = self.model(torch.from_numpy(train_data))
+        output = self.model(model_input)
         if self.cfg.single_output:
             label_tensor = torch.tensor([float(label)])
         else:
@@ -98,28 +112,24 @@ class LTRModel:
         self._optimizer.step()
         return loss.item()
 
-    def train(self, pos_train_data: np.ndarray, neg_train_data: np.ndarray):
+    def train(self, true_train_data: list[ModelInput], epochs: int = 1):
         """
-        Trains the model on the given training data.
-
-        Args:
-            pos_train_data (np.ndarray): The dataset to be trained to be True.
-            neg_train_data (np.ndarray): The dataset to be trained to be False.
+        Trains the model on the given training data and its inverse (if i>j is true then j>i must be false).
         """
         self.model.train()
-    
-        print(fmt(f'Epoch [0/{self.cfg.epochs}], Loss: n/a', 'gray'), end='')
-        for epoch in range(self.cfg.epochs):
-            losses = [
-                self._train_step(data, True) for data in pos_train_data
-                ] + [
-                self._train_step(data, False) for data in neg_train_data
-                ]
+        shuffle(true_train_data)
+        epochs *= self.cfg.epoch_scale
+        print(fmt(f'Epoch [0/{epochs}], Loss: n/a', 'gray'), end='')
+        for epoch in range(epochs):
+            losses = []
+            for mi in true_train_data:
+                losses.append(self._train_step(mi, True))
+                losses.append(self._train_step(mi.inverse(), False))
             loss = f'{(sum(losses) / len(losses)):.4f}' if len(losses) > 0 else 'n/a'
-            print(fmt(f'\rEpoch [{epoch + 1}/{self.cfg.epochs}], Loss: {loss}', 'gray'), end='')
+            print(fmt(f'\rEpoch [{epoch + 1}/{epochs}], Loss: {loss}', 'gray'), end='')
         print()
 
-    def infer(self, query: np.ndarray, sup_doc: np.ndarray, inf_doc: np.ndarray) -> (bool, float|tuple):
+    def infer(self, model_input: ModelInput) -> (bool, float|tuple):
         """
         Infer the relative relevance of two documents given a query from the model.
 
@@ -133,14 +143,13 @@ class LTRModel:
             float|tuple: The output of the model (either a single probability or a tuple for the probabilities to be True and False).
         """
         self.model.eval()
-        _input = torch.from_numpy(self.make_input(query, sup_doc, inf_doc))
         with torch.no_grad():
-            res = self.model(_input)
+            res = self.model(model_input)
             if self.cfg.single_output:
                 return res.item() > 0.5, res.item()
             else:
                 a, b = F.softmax(res, dim=0)
-                return a.item() > b.item(), (a, b)
+                return a.item() > b.item(), (a.item(), b.item())
 
     def apply_updates(self, update_model):
         if self.cfg.quantize:
