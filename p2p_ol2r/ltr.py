@@ -57,19 +57,6 @@ class LTR(LTRModel):
             """
             return [x for x, _ in self.embeddings.search(query, self.cfg.number_of_results)]
 
-    def _get_result_pairs(self, query: str) -> list[str]:
-        """
-        Retrieve top-k results from semantic search and generate all possible combination pairs.
-
-        Args:
-            query: query string
-
-        Returns:
-            List of combination pairs of result IDs
-        """
-        results = [x for x, _ in self.embeddings.search(query, self.cfg.number_of_results)]
-        return list(combinations(results, 2))
-
     def embed(self, x: str) -> list[float]:
         """
         Get vector representation of a (query) string.
@@ -89,14 +76,12 @@ class LTR(LTRModel):
             true training data
         """
         query_vector = self.embed(query)
-        
-        pos_train_data = [ModelInput(
+        train_data = [ModelInput(
             query_vector,
             self.embeddings_map[results[selected_res]],
             self.embeddings_map[results[i]]
         ) for i in range(len(results)) if i != selected_res]
-
-        return pos_train_data
+        return train_data
     
     def result_ids_to_titles(self, results: list[str]) -> list[str]:
         return [self.metadata[x] for x in results]
@@ -113,8 +98,8 @@ class LTR(LTRModel):
             The list of result IDs sorted by their relevance to the query.
         """
         result_pairs = list(combinations(result_ids, 2))
-        result_scores = {}
-
+        result_scores = {id: 0 for id in result_ids}
+        
         # aggregate inferred probabilities for each result pair
         for (d1_id, d2_id) in result_pairs:
             d1 = self.embeddings_map[d1_id]
@@ -123,7 +108,7 @@ class LTR(LTRModel):
             prob_1_over_2 = v[0] if type(v) == tuple else v
             prob_2_over_1 = v[1] if type(v) == tuple else 1-v
 
-            result_scores[d1_id] = result_scores.get(d1_id, 0) + prob_1_over_2
+            result_scores[d1_id] = result_scores.get(d1_id) + prob_1_over_2
             result_scores[d2_id] = result_scores.get(d2_id, 0) + prob_2_over_1
 
         # order result scores

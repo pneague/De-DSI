@@ -62,11 +62,8 @@ class TestModel(unittest.TestCase):
         res, _ = ltr_model.infer(ModelInput(q, docs[1], docs[0]))
         self.assertFalse(res)
         
-
-    #@unittest.skip("the ultimate test - doesn't work yet 🥲")
     def test_full_ranking(self):
         ltr_model, k, q, docs = setUp()
-
         train_data = []
 
         for i in range(k-1):
