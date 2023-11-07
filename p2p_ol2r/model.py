@@ -9,6 +9,7 @@ from random import shuffle
 from .utils import *
 from .config import Config
 
+
 class ModelInput(torch.Tensor):
     """
     A tensor representing the input to the model (the query-doc-doc triplet).

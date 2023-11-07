@@ -8,7 +8,7 @@ from tests import cfg
 def setUp():
     ltr_model = LTRModel(cfg)
     q = np.random.rand(768)
-    docs = [np.random.rand(768) for _ in range(cfg.number_of_results)]
+    docs = [np.random.RandomState(i).rand(768) for i in range(cfg.number_of_results)]
     return ltr_model, cfg.number_of_results, q, docs
 
 class TestModel(unittest.TestCase):
@@ -69,17 +69,17 @@ class TestModel(unittest.TestCase):
         for i in range(k-1):
             # docs[i] to be above all others
             i_over_all = [ModelInput(q, docs[i], docs[j]) for j in range(k) if i != j]
-            epochs = max(0, k*10 - i*10) # with k=9 and epochs+100, this test will fail
+            epochs = max(0, k*10 - i*10)
             train_data.extend(i_over_all * epochs)
         
         with silence(): ltr_model.train(train_data)
 
         for i in range(k-1):
             for j in range(i+1, k):
-                res, _ = ltr_model.infer(ModelInput(q, docs[i], docs[j]))
-                self.assertTrue(res)
-                res, _ = ltr_model.infer(ModelInput(q, docs[j], docs[i]))
-                self.assertFalse(res)
+                res, v = ltr_model.infer(ModelInput(q, docs[i], docs[j]))
+                self.assertTrue(res, f'docs[{i}] > docs[{j}] failed with {v}')
+                res, v = ltr_model.infer(ModelInput(q, docs[j], docs[i]))
+                self.assertFalse(res, f'docs[{j}] > docs[{i}] failed with {v}')
 
 if __name__ == "__main__":
     unittest.main()

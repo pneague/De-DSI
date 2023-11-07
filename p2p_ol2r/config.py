@@ -13,3 +13,15 @@ class Config:
         self.dropout = parser.getfloat('Dropout')
         self.quantize = parser.getboolean('Quantize')
         self.number_of_results = parser.getint('NumberOfResults')
+
+    def __str__(self) -> str:
+        return (f"Config(SingleOutput={self.single_output}, "
+                f"LossFunction={self.loss_fn.__name__ if self.loss_fn else 'None'}, "
+                f"Optimizer={self.optimizer.__name__ if self.optimizer else 'None'}, "
+                f"EpochScale={self.epoch_scale}, "
+                f"LearningRate={self.lr}, "
+                f"HiddenLayers={self.hidden_layers}, "
+                f"HiddenUnits={self.hidden_units}, "
+                f"Dropout={self.dropout}, "
+                f"Quantize={self.quantize}, "
+                f"NumberOfResults={self.number_of_results})")

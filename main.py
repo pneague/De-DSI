@@ -25,7 +25,6 @@ from p2p_ol2r.config import Config
 
 # Enhance normal dataclasses for IPv8 (see the serialization documentation)
 dataclass = overwrite_dataclass(dataclass)
-
 @dataclass(msg_id=1)  # The value 1 identifies this message and must be unique per community
 class UpdateModel:
     id: bytes
@@ -58,6 +57,7 @@ class LTRCommunity(Community):
         self.ltr = LTR(cfg)
 
         if args.simulation:
+            print(cfg)
             print(fmt('Enter query for simulation', 'yellow'))
             query = input(f"\r{fmt('QUERY', 'purple')}: ")
 
@@ -79,18 +79,18 @@ class LTRCommunity(Community):
                 remaining_results.pop(selected_id)
 
             # For result #1, e.g., simulate sim_epochs=100 clicks; for result #2, simulate 90 clicks; etc.
-            selected_results = []
             sim_epochs = int(input(f"\r{fmt('Number of epochs on #1 (e.g., 1000)', 'yellow')}: "))
             sim_epoch_diff = int(input(f"\r{fmt('Deduction per rank (e.g., 100)', 'yellow')}: "))
+            clicks = [] # list of clicked result indices
             for i in range(len(ranked_result_ids)):
                 if sim_epoch_diff <= 0: break
-                selected_results += [list(results.keys()).index(ranked_result_ids[i])] * (sim_epochs - i*sim_epoch_diff)
-            random.shuffle(selected_results)
+                clicks.extend([i] * (sim_epochs - i*sim_epoch_diff))
+            random.shuffle(clicks)
 
-            print(fmt(f'Training model on simulation ({len(selected_results)} epochs)...', 'gray'))
+            print(fmt(f'Training model on simulation ({len(clicks) * cfg.epoch_scale} epochs)...', 'gray'))
             with silence():
-                for res in selected_results:
-                    self.ltr.on_result_selected(query, ranked_result_ids, res)
+                for i in clicks:
+                    self.ltr.train(self.ltr.gen_train_data(query, ranked_result_ids, i))
             
             inferred_ranking = list(self.ltr.query(query).keys())
             print(fmt(f'nDCG: {round(ndcg(ranked_result_ids, inferred_ranking), 3)}', 'yellow'))
