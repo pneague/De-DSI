@@ -11,15 +11,13 @@ class LTRModel:
     def __init__(self, quantize: bool, df) -> None:
         self._quantize = quantize
         self.number_of_documents = df['doc_id'].nunique()
+        self.accuracy = []
+        print ('number of documents:', self.number_of_documents)
 
 
         layers = [
             ('lin1', nn.Linear(768, 256)),  # Adjusting the input features from 3*768 to 768
             ('relu1', nn.ReLU()),
-            ('lin2', nn.Linear(256, 256)),
-            ('relu2', nn.ReLU()),
-            ('lin3', nn.Linear(256, 256)),
-            ('relu3', nn.ReLU()),
             ('lin4', nn.Linear(256, self.number_of_documents)),
             # Adjusting the output features for multi-class classification
             # Removing sigmoid activation as we are now dealing with a multi-class problem
@@ -67,16 +65,17 @@ class LTRModel:
         self._optimizer.zero_grad()
         loss.backward()
         self._optimizer.step()
+
+        self.accuracy.append((torch.argmax(output, dim=0) == label))
         return loss.item()
 
     def train(self, train_data, labels, num_epochs):
         self.model.train()
 
-        print(fmt(f'Epoch [0/{num_epochs}], Loss: n/a', 'gray'), end='')
+        # print(fmt(f'Epoch [0/{num_epochs}], Loss: n/a', 'gray'), end='')
         for epoch in range(num_epochs):
             losses = self._train_step(train_data, labels)
-            print(fmt(f'\rEpoch [{epoch + 1}/{num_epochs}], Loss: {losses}', 'gray'), end='')
-        print()
+            # print(fmt(f'\rEpoch [{epoch + 1}/{num_epochs}], Loss: {losses}', 'gray'), end='')
         self.model.eval()
 
     def apply_updates(self, update_model):

@@ -7,6 +7,7 @@ from itertools import combinations
 from operator import itemgetter
 from model import LTRModel
 import warnings
+from vars import num_epochs
 warnings.filterwarnings('ignore', category=UserWarning, message='TypedStorage is deprecated')
 
 class LTR(LTRModel):
@@ -112,7 +113,7 @@ class LTR(LTRModel):
         Retrains the model with the selected result as the most relevant.
         """
         train_data, labels = self.gen_train_data(query, selected_res)
-        self.train(torch.from_numpy(train_data).float(), torch.tensor(labels), 10)
+        self.train(torch.from_numpy(train_data).float(), torch.tensor(labels), num_epochs)
 
         # Update the cached results with a new ranking based on the retrained model
         self.results[query] = self.query(query)
