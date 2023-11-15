@@ -1,13 +1,6 @@
-import io
-import sys
-import os
 from asyncio import run, sleep, create_task
 from dataclasses import dataclass
 import threading
-import queue
-import torch
-import time
-import argparse
 from ipv8.community import Community, CommunitySettings
 from ipv8.configuration import ConfigBuilder, Strategy, WalkerDefinition, default_bootstrap_defs
 from ipv8.lazy_community import lazy_wrapper
@@ -17,12 +10,15 @@ from ipv8.peerdiscovery.network import PeerObserver
 from ipv8.util import run_forever
 from ipv8_service import IPv8
 import numpy as np
+from transformers import T5ForConditionalGeneration, T5Tokenizer, AdamW
+from torch.utils.data import DataLoader
+from torch.utils.data import Dataset
+import pandas as pd
 
 # from simple_term_menu import TerminalMenu
 from ltr import LTR
 from utils import *
 from vars import id1, id2, quantize, sample_nbr
-import pandas as pd
 
 # Enhance normal dataclasses for IPv8 (see the serialization documentation)
 dataclass = overwrite_dataclass(dataclass)
@@ -34,10 +30,13 @@ df = pd.read_csv('data/orcas.tsv', sep='\t', header=None,
 docs = pd.Series(df['doc_id'].unique())
 
 
+
+
+
 @dataclass(msg_id=1)  # The value 1 identifies this message and must be unique per community
 class Query_res:
     query: str
-    result: int
+    result: str
 
 
 
@@ -56,6 +55,7 @@ class LTRCommunity(Community):
         self.row = 0
         self.cycle = 0
         self.accuracies = []
+        self.accuracy = []
         if quantize:
             self.community_id = self.community_id[:-1] + bytes([0x01])
         # self.add_message_handler(UpdateModel, self.on_message)
@@ -71,12 +71,33 @@ class LTRCommunity(Community):
         print("I am:", self.my_peer, "I found:", peer)
 
     def train_model(self, query, res):
-        self.ltr.on_result_selected(query, res)
+        # self.ltr.on_result_selected(query, res)
+        inputs = self.tokenizer([query], padding=True, return_tensors="pt").input_ids
+        labels = self.tokenizer([res], padding=True, return_tensors="pt").input_ids
+
+        outputs = self.model(input_ids=inputs, labels=labels)
+        loss = outputs.loss
+        print (loss)
+        # Extract logits and convert to token IDs
+        logits = outputs.logits
+        predicted_token_ids = torch.argmax(logits, dim=-1)
+
+        # Decode token IDs to text
+        predicted_text = self.tokenizer.decode(predicted_token_ids[0], skip_special_tokens=True)
+        if predicted_text == res:
+            self.accuracy.append(1)
+        else:
+            self.accuracy.append(0)
+
+        loss.backward()
+        self.optimizer.step()
+        self.optimizer.zero_grad()
 
     def get_querynres(self):
         # print ('ROW NUMBER: ', self.row)
         query = df.iloc[self.row]['query']
-        selected_res = docs[docs == df.iloc[self.row]['doc_id']].index[0]
+        # selected_res = docs[docs == df.iloc[self.row]['doc_id']].index[0]
+        selected_res = df.iloc[self.row]['doc_id']
         self.row += 1
         return query, selected_res
 
@@ -89,7 +110,17 @@ class LTRCommunity(Community):
 
     def started(self) -> None:
         print('Indexing (please wait)...')
-        self.ltr = LTR(quantize, df)
+        # self.ltr = LTR(quantize, df)
+
+        # Load model and tokenizer
+        model_name = "t5-small"
+        self.model = T5ForConditionalGeneration.from_pretrained(model_name)
+        self.tokenizer = T5Tokenizer.from_pretrained(model_name)
+        self.optimizer = AdamW(self.model.parameters(), lr=5e-5)
+
+        # Training loop
+        self.model.train()
+
         self.network.add_peer_observer(self)
         print(self.get_peers())
 
@@ -156,20 +187,22 @@ class LTRCommunity(Community):
     @lazy_wrapper(Query_res)
     def on_message(self, peer: Peer, payload: Query_res) -> None:
         # print(self.my_peer, 'received:', payload.query, payload.result)
-        self.train_model(payload.query, payload.result)
-        new_query, new_res = self.get_querynres()
 
-        if self.row == df.shape[0]:
+        if self.row >= df.shape[0]:
             self.row = 0
             self.cycle += 1
-            self.accuracies.append(self.ltr.accuracy)
-            acc = np.sum(self.ltr.accuracy)/df.shape[0]
+            self.accuracies.append(self.accuracy)
+            acc = np.sum(self.accuracy)/len(self.accuracy)
             print (f'ACCURACY ON CYCLE {self.cycle}": {acc}')
             print ('-----------------------------------------------------------------------------------')
             if acc == 1 or self.cycle > 200:
                 pd.DataFrame([np.sum(i)/df.shape[0] for i in self.accuracies]).to_csv('data/accuracies.csv')
                 raise SystemExit
-            self.ltr.accuracy = []
+            self.accuracy = []
+
+
+        self.train_model(payload.query, payload.result)
+        new_query, new_res = self.get_querynres()
 
         # self.train_model(new_query, new_res)
         self.ez_send(peer, Query_res(query=new_query, result=new_res))
