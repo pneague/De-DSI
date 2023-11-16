@@ -7,6 +7,8 @@ from ipv8.lazy_community import lazy_wrapper
 from ipv8.messaging.payload_dataclass import overwrite_dataclass
 from ipv8.types import Peer
 from ipv8.peerdiscovery.network import PeerObserver
+
+from sklearn.model_selection import train_test_split
 from ipv8.util import run_forever
 from ipv8_service import IPv8
 import numpy as np
@@ -24,10 +26,15 @@ from vars import id1, id2, quantize, sample_nbr
 dataclass = overwrite_dataclass(dataclass)
 
 df = pd.read_csv('data/orcas.tsv', sep='\t', header=None,
-                 names=['query_id', 'query', 'doc_id', 'doc']).sample(sample_nbr).dropna()
+                 names=['query_id', 'query', 'doc_id', 'doc'])
+cnter = df.groupby('doc_id').count().sort_values('query',ascending = False) # get most referenced docs
+df_data = df[df['doc_id'].isin(list(cnter.iloc[1000:1100].index))] #take subset of most referenced docs
+train_df, test_df = train_test_split(df_data, test_size=0.5, random_state=42) # split into train and test
+df = train_df.copy()
+# df = df.sample(sample_nbr).dropna()
 # separate the doc_id into a string with spaces separating the words
 # df['doc_id'] = df['doc_id'].apply(lambda x: ' '.join(x))
-docs = pd.Series(df['doc_id'].unique())
+docs = df[df['doc_id'].isin(df_data['doc_id'].unique())]
 
 
 
@@ -71,6 +78,7 @@ class LTRCommunity(Community):
         print("I am:", self.my_peer, "I found:", peer)
 
     def train_model(self, query, res):
+        self.got_here = False
         # self.ltr.on_result_selected(query, res)
         inputs = self.tokenizer([query], padding=True, return_tensors="pt").input_ids
         labels = self.tokenizer([res], padding=True, return_tensors="pt").input_ids
@@ -184,6 +192,11 @@ class LTRCommunity(Community):
     #         model = torch.load(model_bf)
     #         self.ltr.apply_updates(model)
 
+    def change_df(self, df_changer):
+            global df
+            df = df_changer.copy()
+            self.got_here = True
+
     @lazy_wrapper(Query_res)
     def on_message(self, peer: Peer, payload: Query_res) -> None:
         # print(self.my_peer, 'received:', payload.query, payload.result)
@@ -195,9 +208,14 @@ class LTRCommunity(Community):
             acc = np.sum(self.accuracy)/len(self.accuracy)
             print (f'ACCURACY ON CYCLE {self.cycle}": {acc}')
             print ('-----------------------------------------------------------------------------------')
-            if acc == 1 or self.cycle > 200:
+            # if acc == 1 or self.cycle > 200:
+            if acc >= 0.9:
+                if self.got_here:
+                    raise SystemExit
                 pd.DataFrame([np.sum(i)/df.shape[0] for i in self.accuracies]).to_csv('data/accuracies.csv')
-                raise SystemExit
+                # raise SystemExit
+                self.change_df(test_df)
+
             self.accuracy = []
 
 
