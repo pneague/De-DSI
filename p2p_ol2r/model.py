@@ -9,7 +9,6 @@ from random import shuffle
 from .utils import *
 from .config import Config
 
-
 class ModelInput(torch.Tensor):
     """
     A tensor representing the input to the model (the query-doc-doc triplet).
@@ -61,19 +60,19 @@ class LTRModel:
                     ])
                 else:
                     layers.append(
-                        (f'lin{i+2}', nn.Linear(self.cfg.hidden_units, 2)),
+                        (f'fc{i+2}', nn.Linear(self.cfg.hidden_units, 2)),
                     )
 
         if self.cfg.quantize:
-            # TODO: Fix fused modules
-            raise Exception('Quantization currently not supported')
+            torch.backends.quantized.engine = 'qnnpack'
             self.model = nn.Sequential(OrderedDict([
                 ('quant', QuantStub())] + layers + [('dequant', DeQuantStub())
             ]))
             self.model.eval()
-            self.model.qconfig = get_default_qat_qconfig('onednn')
-            self.model = fuse_modules(self.model,
-                [['lin1', 'relu1'], ['lin2', 'relu2']])
+            self.model.qconfig = get_default_qat_qconfig('qnnpack')
+
+            modules = [[f'fc{i}', f'relu{i}'] for i in range(1, self.cfg.hidden_layers + 1)]
+            self.model = fuse_modules(self.model, modules)
             self.model = prepare_qat(self.model.train())
         else:
             self.model = nn.Sequential(OrderedDict(layers))
@@ -83,7 +82,7 @@ class LTRModel:
 
     def serialize_model(self) -> io.BytesIO:
         buffer = io.BytesIO()
-        if self._quantize:
+        if self.cfg.quantize:
             self.model.eval()
             model = torch.quantization.convert(self.model, inplace=False)
         else:
@@ -102,7 +101,9 @@ class LTRModel:
         Returns:
             float: The loss value obtained during the training step.
         """
+        self.model.eval()
         output = self.model(model_input)
+        self.model.train()
         if self.cfg.single_output:
             label_tensor = torch.tensor([float(label)])
         else:
@@ -121,7 +122,6 @@ class LTRModel:
             true_train_data: The training data to train on to be classified as true.
             epochs: The number of epochs to train each training data item on.
         """
-        self.model.train()
         shuffle(true_train_data)
         epochs *= self.cfg.epoch_scale
         print(fmt(f'Epoch [0/{epochs}], Loss: n/a', 'gray'), end='')
