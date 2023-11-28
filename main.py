@@ -20,21 +20,23 @@ import pandas as pd
 # from simple_term_menu import TerminalMenu
 from ltr import LTR
 from utils import *
-from vars import id1, id2, quantize, sample_nbr
+from vars import id1, id2, quantize, sample_nbr, batch_size, model_name
 
 # Enhance normal dataclasses for IPv8 (see the serialization documentation)
 dataclass = overwrite_dataclass(dataclass)
 
+
+
 df = pd.read_csv('data/orcas.tsv', sep='\t', header=None,
                  names=['query_id', 'query', 'doc_id', 'doc'])
-cnter = df.groupby('doc_id').count().sort_values('query',ascending = False) # get most referenced docs
-df_data = df[df['doc_id'].isin(list(cnter.iloc[1000:1100].index))] #take subset of most referenced docs
-train_df, test_df = train_test_split(df_data, test_size=0.5, random_state=42) # split into train and test
-df = train_df.copy()
-# df = df.sample(sample_nbr).dropna()
-# separate the doc_id into a string with spaces separating the words
-# df['doc_id'] = df['doc_id'].apply(lambda x: ' '.join(x))
-docs = df[df['doc_id'].isin(df_data['doc_id'].unique())]
+cnter = df.groupby('doc_id').count().sort_values('query',ascending = False) # get most referenced docse subset of most referenced docs
+df[df['doc_id'].isin(list(cnter.sample(10000).index))]
+
+
+# train_df, test_df = train_test_split(df_data, test_size=0.5, random_state=42) # split into train and test
+# self.df = train_df.copy()
+# self.df = self.df.sample(sample_nbr).dropna()
+# docs = self.df[self.df['doc_id'].isin(df_data['doc_id'].unique())]
 
 
 
@@ -59,8 +61,15 @@ class LTRCommunity(Community):
 
     def __init__(self, settings: CommunitySettings) -> None:
         super().__init__(settings)
-        self.row = 0
-        self.cycle = 0
+
+        number_of_docs_for_this_user = np.random.randint(800, 1200)
+        self.df = df[df['doc_id'].isin(list(cnter.sample(number_of_docs_for_this_user).index))]  # tak
+        self.current_queries = []
+        self.current_docs = []
+        self.accuracies_avg = 0
+        self.accuracies_sum = 0
+        self.rolling_window = 5000
+        self.losses = []
         self.accuracies = []
         self.accuracy = []
         if quantize:
@@ -77,35 +86,87 @@ class LTRCommunity(Community):
     def on_peer_added(self, peer: Peer) -> None:
         print("I am:", self.my_peer, "I found:", peer)
 
-    def train_model(self, query, res):
+    # def train_model(self, query, res):
+        # self.got_here = False
+        # # self.ltr.on_result_selected(query, res)
+        # inputs = self.tokenizer([query], padding=True, return_tensors="pt").input_ids
+        # labels = self.tokenizer([res], padding=True, return_tensors="pt").input_ids
+        #
+        # outputs = self.model(input_ids=inputs, labels=labels)
+        # loss = outputs.loss
+        # print (loss)
+        # # Extract logits and convert to token IDs
+        # logits = outputs.logits
+        # predicted_token_ids = torch.argmax(logits, dim=-1)
+        #
+        # # Decode token IDs to text
+        # predicted_text = self.tokenizer.decode(predicted_token_ids[0], skip_special_tokens=True)
+        # if predicted_text == res:
+        #     self.accuracy.append(1)
+        # else:
+        #     self.accuracy.append(0)
+        #
+        # loss.backward()
+        # self.optimizer.step()
+        # self.optimizer.zero_grad()
+    def train_model(self, queries, responses):
         self.got_here = False
-        # self.ltr.on_result_selected(query, res)
-        inputs = self.tokenizer([query], padding=True, return_tensors="pt").input_ids
-        labels = self.tokenizer([res], padding=True, return_tensors="pt").input_ids
 
+        # Tokenize the lists of queries and responses
+        inputs = self.tokenizer(queries, padding=True, return_tensors="pt", truncation=True).input_ids
+        labels = self.tokenizer(responses, padding=True, return_tensors="pt", truncation=True).input_ids
+
+        # Forward pass
         outputs = self.model(input_ids=inputs, labels=labels)
         loss = outputs.loss
-        print (loss)
+
         # Extract logits and convert to token IDs
         logits = outputs.logits
         predicted_token_ids = torch.argmax(logits, dim=-1)
 
-        # Decode token IDs to text
-        predicted_text = self.tokenizer.decode(predicted_token_ids[0], skip_special_tokens=True)
-        if predicted_text == res:
-            self.accuracy.append(1)
+        self.accuracy = []
+
+        # Decode token IDs to text for each item in the batch
+        for i in range(predicted_token_ids.size(0)):
+            predicted_text = self.tokenizer.decode(predicted_token_ids[i], skip_special_tokens=True)
+            if predicted_text == responses[i]:
+                self.accuracy.append(1)
+            else:
+                self.accuracy.append(0)
+
+        acc = np.sum(self.accuracy) / len(self.accuracy)
+
+        self.losses.append(loss)
+        self.accuracies.append(acc)
+        self.accuracies_sum += acc
+        if len(self.accuracies) > self.rolling_window:
+            self.accuracies_sum -= self.accuracies[-self.rolling_window]
+            print(f'ACCURACY ": {round(self.accuracies_sum/self.rolling_window,2)}')
+            self.accuracies_avg = self.accuracies_sum / self.rolling_window
         else:
-            self.accuracy.append(0)
+            self.accuracies_avg = self.accuracies_sum / len(self.accuracies)
+
+        if self.accuracies_avg >= 0.9:
+            pd.DataFrame(self.accuracies).to_csv('data/accuracies.csv')
+            pd.DataFrame(self.losses).to_csv('data/losses.csv')
+            raise SystemExit
+            # self.change_df(test_df)
+        print(loss, f'ACCURACY ": {round(acc,2)}, ACCURACY_AVG: {round(self.accuracies_avg,2)}')
 
         loss.backward()
         self.optimizer.step()
         self.optimizer.zero_grad()
 
+
+
+
+
     def get_querynres(self):
+        self.row = np.random.randint(0, self.df.shape[0])
         # print ('ROW NUMBER: ', self.row)
-        query = df.iloc[self.row]['query']
-        # selected_res = docs[docs == df.iloc[self.row]['doc_id']].index[0]
-        selected_res = df.iloc[self.row]['doc_id']
+        query = self.df.iloc[self.row]['query']
+        # selected_res = docs[docs == self.df.iloc[self.row]['doc_id']].index[0]
+        selected_res = self.df.iloc[self.row]['doc_id']
         self.row += 1
         return query, selected_res
 
@@ -118,13 +179,12 @@ class LTRCommunity(Community):
 
     def started(self) -> None:
         print('Indexing (please wait)...')
-        # self.ltr = LTR(quantize, df)
+        # self.ltr = LTR(quantize, self.df)
 
         # Load model and tokenizer
-        model_name = "t5-small"
         self.model = T5ForConditionalGeneration.from_pretrained(model_name)
         self.tokenizer = T5Tokenizer.from_pretrained(model_name)
-        self.optimizer = AdamW(self.model.parameters(), lr=5e-5)
+        self.optimizer = AdamW(self.model.parameters(), lr=1e-3)
 
         # Training loop
         self.model.train()
@@ -159,8 +219,8 @@ class LTRCommunity(Community):
         #         # while self.input_queue.empty():
         #         #     await sleep(0.1)
         #         print (row)
-        #         query = df.iloc[row]['query']
-        #         selected_res = docs[docs==df.iloc[row]['doc_id']].index[0]
+        #         query = self.df.iloc[row]['query']
+        #         selected_res = docs[docs==self.df.iloc[row]['doc_id']].index[0]
         #         print (query, selected_res)
         #         row += 1
         #         if selected_res is None: continue
@@ -193,33 +253,33 @@ class LTRCommunity(Community):
     #         self.ltr.apply_updates(model)
 
     def change_df(self, df_changer):
-            global df
-            df = df_changer.copy()
+            self.df = df_changer.copy()
             self.got_here = True
 
     @lazy_wrapper(Query_res)
     def on_message(self, peer: Peer, payload: Query_res) -> None:
         # print(self.my_peer, 'received:', payload.query, payload.result)
 
-        if self.row >= df.shape[0]:
-            self.row = 0
-            self.cycle += 1
-            self.accuracies.append(self.accuracy)
-            acc = np.sum(self.accuracy)/len(self.accuracy)
-            print (f'ACCURACY ON CYCLE {self.cycle}": {acc}')
-            print ('-----------------------------------------------------------------------------------')
-            # if acc == 1 or self.cycle > 200:
-            if acc >= 0.9:
-                if self.got_here:
-                    raise SystemExit
-                pd.DataFrame([np.sum(i)/df.shape[0] for i in self.accuracies]).to_csv('data/accuracies.csv')
+        # if self.row >= self.df.shape[0]:
+        #     self.row = 0
+        #     self.accuracies.append(self.accuracy)
+            # if acc >= 0.9:
+            #     if self.got_here:
+            #         raise SystemExit
+            #     pd.DataFrame([np.sum(i)/self.df.shape[0] for i in self.accuracies]).to_csv('data/accuracies.csv')
                 # raise SystemExit
-                self.change_df(test_df)
-
-            self.accuracy = []
+                # self.change_df(test_df)
 
 
-        self.train_model(payload.query, payload.result)
+        self.current_queries.append(payload.query)
+        self.current_docs.append(payload.result)
+
+        if len(self.current_queries)>batch_size:
+            self.train_model(self.current_queries, self.current_docs)
+            self.current_queries = []
+            self.current_docs = []
+
+        # self.train_model(payload.query, payload.result)
         new_query, new_res = self.get_querynres()
 
         # self.train_model(new_query, new_res)
