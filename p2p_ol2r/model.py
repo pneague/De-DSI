@@ -1,22 +1,25 @@
 import io
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 from collections import OrderedDict
-import torch.nn.functional as F
 from torch.ao.quantization import get_default_qat_qconfig, prepare_qat, fuse_modules, QuantStub, DeQuantStub
 from random import shuffle
 from .utils import *
 from .config import Config
 
 class ModelInput(torch.Tensor):
+
+    device = torch.device('cpu')
+
     """
     A tensor representing the input to the model (the query-doc-doc triplet).
     """
     @staticmethod
     def __new__(cls, query_vector: np.ndarray, sup_doc_vector: np.ndarray, inf_doc_vector: np.ndarray):
         input_array = np.concatenate([query_vector, sup_doc_vector, inf_doc_vector])
-        tensor = torch.as_tensor(input_array, dtype=torch.float32)
+        tensor = torch.as_tensor(input_array, dtype=torch.float32, device=cls.device)
         obj = torch.Tensor._make_subclass(cls, tensor)
         obj.query = query_vector
         obj.sup_doc = sup_doc_vector
@@ -34,8 +37,18 @@ LabeledModelInput = tuple[ModelInput, bool]
 
 class LTRModel:
     
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: Config, device: str = 'cpu') -> None:
         self.cfg = config
+        self.device = torch.device(device)
+        ModelInput.device = self.device
+
+        # pre-declare tensors used in `train_step` here to avoid creating new tensors every time
+        if self.cfg.single_output:
+            self.true_tensor = torch.tensor([1.0], device=self.device)
+            self.false_tensor = torch.tensor([0.0], device=self.device)
+        else:
+            self.true_tensor = torch.tensor([1.0, 0.0], device=self.device)
+            self.false_tensor = torch.tensor([0.0, 1.0], device=self.device)
 
         layers = [
             ('fc1', nn.Linear(3*768, self.cfg.hidden_units)),
@@ -77,6 +90,7 @@ class LTRModel:
         else:
             self.model = nn.Sequential(OrderedDict(layers))
 
+        self.model.to(self.device)
         self._criterion = self.cfg.loss_fn()
         self._optimizer = self.cfg.optimizer(self.model.parameters(), lr=self.cfg.lr)
 
@@ -101,13 +115,9 @@ class LTRModel:
         Returns:
             float: The loss value obtained during the training step.
         """
-        self.model.eval()
         output = self.model(model_input)
         self.model.train()
-        if self.cfg.single_output:
-            label_tensor = torch.tensor([float(label)])
-        else:
-            label_tensor = torch.tensor([1.0, 0.0] if label else [0.0, 1.0])
+        label_tensor = self.true_tensor if label else self.false_tensor
         loss = self._criterion(output, label_tensor)
         self._optimizer.zero_grad()
         loss.backward()

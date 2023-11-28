@@ -1,7 +1,6 @@
 import struct
 import csv
 import numpy as np
-import torch
 from txtai.embeddings import Embeddings
 from itertools import combinations
 from operator import itemgetter
@@ -23,8 +22,8 @@ class LTR(LTRModel):
     embeddings_map = {}
     embeddings = None
 
-    def __init__(self, cfg: Config):
-        super().__init__(cfg)
+    def __init__(self, cfg: Config, device: str = 'cpu'):
+        super().__init__(cfg, device)
 
         with open('data/metadata.csv', 'r') as f:
             reader = csv.reader(f)

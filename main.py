@@ -54,7 +54,7 @@ class LTRCommunity(Community):
 
     def started(self) -> None:
         print('Indexing (please wait)...')
-        self.ltr = LTR(cfg)
+        self.ltr = LTR(cfg, args.device)
 
         if args.simulation:
             print(cfg)
@@ -153,6 +153,7 @@ async def start_communities() -> None:
 parser = argparse.ArgumentParser(prog='Peer-to-Peer Online Learning-to-Rank')
 parser.add_argument('id', help='identity of this peer')
 parser.add_argument('-s', '--simulation', action='store_true', help='perform simulation of user clicks on a set query')
+parser.add_argument('--device', type=str, default='cpu', choices=['cpu', 'cuda', 'mps'], help='specify the device to use')
 args = parser.parse_args()
 
 cfgParser = ConfigParser()
