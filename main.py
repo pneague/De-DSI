@@ -1,4 +1,6 @@
 from asyncio import run, sleep, create_task
+
+from ipv8.taskmanager import TaskManager
 from dataclasses import dataclass
 import threading
 from ipv8.community import Community, CommunitySettings
@@ -6,6 +8,7 @@ from ipv8.configuration import ConfigBuilder, Strategy, WalkerDefinition, defaul
 from ipv8.lazy_community import lazy_wrapper
 from ipv8.messaging.payload_dataclass import overwrite_dataclass
 from ipv8.types import Peer
+from time import time, localtime, strftime
 from ipv8.peerdiscovery.network import PeerObserver
 
 from sklearn.model_selection import train_test_split
@@ -16,11 +19,12 @@ from transformers import T5ForConditionalGeneration, T5Tokenizer, AdamW
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset
 import pandas as pd
+import random
 
 # from simple_term_menu import TerminalMenu
 from ltr import LTR
 from utils import *
-from vars import id1, id2, quantize, sample_nbr, batch_size, model_name
+from vars import *
 
 # Enhance normal dataclasses for IPv8 (see the serialization documentation)
 dataclass = overwrite_dataclass(dataclass)
@@ -30,10 +34,16 @@ dataclass = overwrite_dataclass(dataclass)
 df = pd.read_csv('data/orcas.tsv', sep='\t', header=None,
                  names=['query_id', 'query', 'doc_id', 'doc'])
 cnter = df.groupby('doc_id').count().sort_values('query',ascending = False) # get most referenced docse subset of most referenced docs
-df[df['doc_id'].isin(list(cnter.sample(10000).index))]
+cnter = cnter[cnter['query']>1] # remove docs that are referenced only once to make stratify work
+docs_to_be_used = cnter.sample(total_doc_count)
+df = df[df['doc_id'].isin(list(docs_to_be_used.index))]
 
 
-# train_df, test_df = train_test_split(df_data, test_size=0.5, random_state=42) # split into train and test
+train_df, test_df = train_test_split(df, test_size=0.5, random_state=42, stratify=df['doc_id']) # split into train and test
+train_df.to_csv('data/datasets/train_df.csv')
+test_df.to_csv('data/datasets/test_df.csv')
+df = train_df.copy()
+
 # self.df = train_df.copy()
 # self.df = self.df.sample(sample_nbr).dropna()
 # docs = self.df[self.df['doc_id'].isin(df_data['doc_id'].unique())]
@@ -62,13 +72,17 @@ class LTRCommunity(Community):
     def __init__(self, settings: CommunitySettings) -> None:
         super().__init__(settings)
 
-        number_of_docs_for_this_user = np.random.randint(800, 1200)
-        self.df = df[df['doc_id'].isin(list(cnter.sample(number_of_docs_for_this_user).index))]  # tak
+        number_of_docs_for_this_user = np.random.randint(number_of_docs_per_user[0], number_of_docs_per_user[1])
+        self.df = df[df['doc_id'].isin(list(docs_to_be_used.sample(number_of_docs_for_this_user).index))]
+        self.batches_so_far = 0
         self.current_queries = []
         self.current_docs = []
+        self.timestamps = []
         self.accuracies_avg = 0
         self.accuracies_sum = 0
-        self.rolling_window = 5000
+        self.rolling_window = 100
+
+        task_manager = TaskManager()
         self.losses = []
         self.accuracies = []
         self.accuracy = []
@@ -112,6 +126,8 @@ class LTRCommunity(Community):
     def train_model(self, queries, responses):
         self.got_here = False
 
+
+        self.batches_so_far+=1
         # Tokenize the lists of queries and responses
         inputs = self.tokenizer(queries, padding=True, return_tensors="pt", truncation=True).input_ids
         labels = self.tokenizer(responses, padding=True, return_tensors="pt", truncation=True).input_ids
@@ -136,22 +152,31 @@ class LTRCommunity(Community):
 
         acc = np.sum(self.accuracy) / len(self.accuracy)
 
-        self.losses.append(loss)
+        self.losses.append(round(float(loss.detach()),3))
         self.accuracies.append(acc)
+
+        self.timestamps.append(int(time()))
         self.accuracies_sum += acc
         if len(self.accuracies) > self.rolling_window:
             self.accuracies_sum -= self.accuracies[-self.rolling_window]
-            print(f'ACCURACY ": {round(self.accuracies_sum/self.rolling_window,2)}')
             self.accuracies_avg = self.accuracies_sum / self.rolling_window
         else:
             self.accuracies_avg = self.accuracies_sum / len(self.accuracies)
 
-        if self.accuracies_avg >= 0.9:
-            pd.DataFrame(self.accuracies).to_csv('data/accuracies.csv')
-            pd.DataFrame(self.losses).to_csv('data/losses.csv')
-            raise SystemExit
+        # if self.accuracies_avg >= accuracy_threshold:
+        if self.batches_so_far % batches_save_threshold == 0:
+            pd.DataFrame(list(zip(self.timestamps, self.accuracies)),
+                         columns = ['timestamps','accuracies']).to_csv(f'data/accuracies/{self.my_peer.address[1]}_accuracies.csv')
+            pd.DataFrame(list(zip(self.timestamps, self.losses)),
+                         columns = ['timestamps','losses']).to_csv(f'data/losses/{self.my_peer.address[1]}_losses.csv')
+            self.model.save_pretrained(f'data/models/{self.my_peer.address[1]}_{strftime("%Y-%m-%d %H%M%S", localtime())}_my_t5_model')
+            self.df.to_csv(f'data/datasets/{self.my_peer.address[1]}_df.csv')
             # self.change_df(test_df)
-        print(loss, f'ACCURACY ": {round(acc,2)}, ACCURACY_AVG: {round(self.accuracies_avg,2)}')
+            if self.accuracies_avg>0.9:
+                raise SystemExit
+
+        print(f'peer port:{self.my_peer.address[1]}, loss: {round(float(loss.detach()),3)}, ACCURACY ": {round(acc,2)}, '
+              f'ACCURACY_AVG: {round(self.accuracies_avg,2)}')
 
         loss.backward()
         self.optimizer.step()
@@ -200,14 +225,31 @@ class LTRCommunity(Community):
                 query, selected_res = self.get_querynres()
                 print('starting comms & ending comms')
                 self.cancel_pending_task("start_communication")
-                for p in self.get_peers():
-                    self.ez_send(p, Query_res(query=query, result=selected_res))
+
+
+
+                p = random.choice(self.get_peers())
+                self.ez_send(p, Query_res(query=query, result=selected_res))
             else:
-                # self.cancel_pending_task("start_communication")
                 print('gonna try again')
                 pass
 
+        async def send_query() -> None:
+            # self.train_model(payload.query, payload.result)
+            if len(self.get_peers()) == 0:
+                return None
+            new_query, new_res = self.get_querynres()
+            self.current_queries.append(new_query)
+            self.current_docs.append(new_res)
+
+            p = random.choice(self.get_peers())
+
+            self.check_batch_size_and_train()
+            # self.train_model(new_query, new_res)
+            self.ez_send(p, Query_res(query=new_query, result=new_res))
+
         self.register_task("start_communication", start_communication, interval=5.0, delay=0)
+        self.register_task("send_random_q_d_pair", send_query, interval=0.01, delay=0)
         # async def app() -> None:
         #     print ("NUMBER OF PEERS FOUND:", len(self.get_peers()) )
         #     # threading.Thread(daemon=True).start()
@@ -252,6 +294,12 @@ class LTRCommunity(Community):
     #         model = torch.load(model_bf)
     #         self.ltr.apply_updates(model)
 
+    def check_batch_size_and_train(self):
+        if len(self.current_queries)>=batch_size:
+            self.train_model(self.current_queries, self.current_docs)
+            self.current_queries = []
+            self.current_docs = []
+
     def change_df(self, df_changer):
             self.df = df_changer.copy()
             self.got_here = True
@@ -273,17 +321,9 @@ class LTRCommunity(Community):
 
         self.current_queries.append(payload.query)
         self.current_docs.append(payload.result)
+        self.check_batch_size_and_train()
 
-        if len(self.current_queries)>batch_size:
-            self.train_model(self.current_queries, self.current_docs)
-            self.current_queries = []
-            self.current_docs = []
 
-        # self.train_model(payload.query, payload.result)
-        new_query, new_res = self.get_querynres()
-
-        # self.train_model(new_query, new_res)
-        self.ez_send(peer, Query_res(query=new_query, result=new_res))
 
     # @lazy_wrapper(MyMessage)
     # def on_message(self, peer: Peer, payload: MyMessage) -> None:
@@ -296,7 +336,7 @@ class LTRCommunity(Community):
 
 
 async def start_communities() -> None:
-    for i in [1, 2]:
+    for i in range(peer_nbr):
         builder = ConfigBuilder().clear_keys().clear_overlays()
         builder.add_key("my peer", "medium", f"certs/ec{i}.pem")
         builder.add_overlay("LTRCommunity", "my peer",
