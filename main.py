@@ -1,4 +1,5 @@
 from asyncio import run, sleep, create_task
+import os
 
 from ipv8.taskmanager import TaskManager
 from dataclasses import dataclass
@@ -29,10 +30,18 @@ from vars import *
 # Enhance normal dataclasses for IPv8 (see the serialization documentation)
 dataclass = overwrite_dataclass(dataclass)
 
-
-
+start_time = time()
+print (start_time)
 df = pd.read_csv('data/orcas.tsv', sep='\t', header=None,
                  names=['query_id', 'query', 'doc_id', 'doc'])
+
+
+# Filter out docs from previous run for peers-split-in-two-groups experiment
+# df_filter_out1 = pd.read_csv(os.path.join('aggregated_results','10_peers_10kEpochs_group1','datasets','train_df.csv'))['doc_id'].unique()
+# df_filter_out2 = pd.read_csv(os.path.join('aggregated_results','10_peers_10kEpochs_group2','datasets','train_df.csv'))['doc_id'].unique()
+# df = df[~df['doc_id'].isin(df_filter_out1)]
+# df = df[~df['doc_id'].isin(df_filter_out2)]
+
 cnter = df.groupby('doc_id').count().sort_values('query',ascending = False) # get most referenced docse subset of most referenced docs
 cnter = cnter[cnter['query']>1] # remove docs that are referenced only once to make stratify work
 docs_to_be_used = cnter.sample(total_doc_count)
@@ -172,8 +181,12 @@ class LTRCommunity(Community):
             self.model.save_pretrained(f'data/models/{self.my_peer.address[1]}_{strftime("%Y-%m-%d %H%M%S", localtime())}_my_t5_model')
             self.df.to_csv(f'data/datasets/{self.my_peer.address[1]}_df.csv')
             # self.change_df(test_df)
-            if self.accuracies_avg>0.9:
+            # if self.accuracies_avg>0.9:
+            if self.batches_so_far > 10000:
                 raise SystemExit
+                end_time = time()
+                print (end_time - start_time)
+
 
         print(f'peer port:{self.my_peer.address[1]}, loss: {round(float(loss.detach()),3)}, ACCURACY ": {round(acc,2)}, '
               f'ACCURACY_AVG: {round(self.accuracies_avg,2)}')
@@ -239,8 +252,14 @@ class LTRCommunity(Community):
             if len(self.get_peers()) == 0:
                 return None
             new_query, new_res = self.get_querynres()
-            self.current_queries.append(new_query)
-            self.current_docs.append(new_res)
+            if len(self.current_queries) == 0:
+                for i in range ( round(batch_size/len(self.get_peers())) ):
+                    new_query, new_res = self.get_querynres()
+                    self.current_queries.append(new_query)
+                    self.current_docs.append(new_res)
+
+            # self.current_queries.append(new_query)
+            # self.current_docs.append(new_res)
 
             p = random.choice(self.get_peers())
 
