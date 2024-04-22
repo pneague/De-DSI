@@ -1,170 +1,281 @@
-import io
-import sys
+from asyncio import run
 import os
-from asyncio import run, sleep
+import torch
+
+from ipv8.taskmanager import TaskManager
 from dataclasses import dataclass
 import threading
-import queue
-import time
-import argparse
-import torch
-import random
-from configparser import ConfigParser
 from ipv8.community import Community, CommunitySettings
 from ipv8.configuration import ConfigBuilder, Strategy, WalkerDefinition, default_bootstrap_defs
 from ipv8.lazy_community import lazy_wrapper
 from ipv8.messaging.payload_dataclass import overwrite_dataclass
 from ipv8.types import Peer
+from time import time, localtime, strftime
+
+from sklearn.model_selection import train_test_split
 from ipv8.util import run_forever
 from ipv8_service import IPv8
+import numpy as np
+from transformers import T5ForConditionalGeneration, T5Tokenizer, AdamW
+import pandas as pd
+import random
 
-from simple_term_menu import TerminalMenu
-from p2p_ol2r.ltr import LTR
-from p2p_ol2r.utils import *
-from p2p_ol2r.config import Config
+from vars import *
 
-# Enhance normal dataclasses for IPv8 (see the serialization documentation)
+# Check if CUDA is available and set the default device
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
+# Enhance normal dataclasses for IPv8 (see the IPV8 serialization documentation)
 dataclass = overwrite_dataclass(dataclass)
-@dataclass(msg_id=1)  # The value 1 identifies this message and must be unique per community
-class UpdateModel:
-    id: bytes
-    fragment: int
-    total: int
-    data: bytes
 
+@dataclass(msg_id=1)  # The value 1 identifies this message and must be unique per community
+class Query_res:
+    query: str
+    result: str
 
 class LTRCommunity(Community):
-    community_id = b'\x9d\x10\xaa\x8c\xfa\x0b\x19\xee\x96\x8d\xf4\x91\xea\xdc\xcb\x94\xa7\x1d\x8c\x00'
+    community_id = b'\x9d\x10\xaa\x8c\xfa\x0b\x19\xee\x96\x8d\xf4\x91\xea\xdc\xcb\x94\xa7\x1d\x8b\x00'
 
     def __init__(self, settings: CommunitySettings) -> None:
         super().__init__(settings)
-        if cfg.quantize:
-            self.community_id = self.community_id[:-1] + bytes([0x01])
-        self.add_message_handler(UpdateModel, self.on_message)
-        self.input_queue = queue.Queue()
-        self.ready_for_input = threading.Event()
-        self.packets: list[UpdateModel] = []
+        print ('-----------------------------------------------------------------')
 
-    def input_thread(self):
-        while True:
-            self.ready_for_input.wait()
-            query = input(f"\r{fmt('QUERY', 'purple')}: ")
-            self.input_queue.put(query)
-            self.ready_for_input.clear()
+        number_of_docs_for_this_user = np.random.randint(number_of_docs_per_user[0], number_of_docs_per_user[1])
+        
+        with open('./output.log', 'a') as file:
+                file.write(' doc nbr:' + str(number_of_docs_for_this_user) + ' ')
+        self.df = df[df['doc_id'].isin(list(docs_to_be_used.sample(number_of_docs_for_this_user)['doc_id']))]
+       	with open('./output.log', 'a') as file:
+                file.write(' df size ' + str(self.df.shape[0]) + ' ')
+
+        self.batches_so_far = 0
+        self.current_queries = []
+        self.current_docs = []
+        self.timestamps = []
+        self.accuracies_avg = 0
+        self.accuracies_sum = 0
+        self.rolling_window = 100
+
+        task_manager = TaskManager()
+        self.losses = []
+        self.accuracies = []
+        self.accuracy = []
+        self.add_message_handler(Query_res, self.on_message)
+        self.ready_for_input = threading.Event()
+        self.lamport_clock = 0
+        self.past_data = {'queries': [], 'results': []}
+
+    def on_peer_added(self, peer: Peer) -> None:
+        print("I am:", self.my_peer, "I found:", peer)
+
+    def train_model(self, queries, responses):
+        self.got_here = False
+
+
+        self.batches_so_far+=1
+        # Tokenize the lists of queries and responses
+        inputs = self.tokenizer(queries, padding=True, return_tensors="pt", truncation=True).input_ids.to(device)
+        labels = self.tokenizer(responses, padding=True, return_tensors="pt", truncation=True).input_ids.to(device)
+
+        # Forward pass
+        outputs = self.model(input_ids=inputs, labels=labels)
+        loss = outputs.loss
+
+        # Extract logits and convert to token IDs
+        logits = outputs.logits
+        predicted_token_ids = torch.argmax(logits, dim=-1)
+
+        self.accuracy = []
+
+        # Decode token IDs to text for each item in the batch
+        for i in range(predicted_token_ids.size(0)):
+            predicted_text = self.tokenizer.decode(predicted_token_ids[i], skip_special_tokens=True)
+#            with open('./output.log', 'a') as file:
+#                        file.write('\n' + predicted_text + ' ' + responses[i])
+            if predicted_text == responses[i]:
+                self.accuracy.append(1)
+            else:
+                self.accuracy.append(0)
+
+        acc = np.sum(self.accuracy) / len(self.accuracy)
+
+        self.losses.append(round(float(loss.detach()),3))
+        self.accuracies.append(acc)
+
+        self.timestamps.append(int(time()))
+        self.accuracies_sum += acc
+        if len(self.accuracies) > self.rolling_window:
+            self.accuracies_sum -= self.accuracies[-self.rolling_window]
+            self.accuracies_avg = self.accuracies_sum / self.rolling_window
+        else:
+            self.accuracies_avg = self.accuracies_sum / len(self.accuracies)
+
+        if self.batches_so_far % batches_save_threshold == 0:
+            pd.DataFrame(list(zip(self.timestamps, self.accuracies)),
+                         columns = ['timestamps','accuracies']).to_csv(f'aggregated_results/{root_folder_for_shard}/accuracies/{self.my_peer.address[1]}_accuracies.csv')
+            pd.DataFrame(list(zip(self.timestamps, self.losses)),
+                         columns = ['timestamps','losses']).to_csv(f'aggregated_results/{root_folder_for_shard}/losses/{self.my_peer.address[1]}_losses.csv')
+            self.model.save_pretrained(f'aggregated_results/{root_folder_for_shard}/models/{self.my_peer.address[1]}_{self.batches_so_far}')
+            self.df.to_csv(f'aggregated_results/{root_folder_for_shard}/datasets/{self.my_peer.address[1]}_df.csv')
+            # self.change_df(test_df)
+            # if self.accuracies_avg>0.95:
+            if self.batches_so_far > 10:
+                raise SystemExit
+                end_time = time()
+                print (end_time - start_time)
+
+
+        print(f'peer port:{self.my_peer.address[1]}, loss: {round(float(loss.detach()),3)}, ACCURACY ": {round(acc,2)}, '
+              f'ACCURACY_AVG: {round(self.accuracies_avg,2)}')
+        with open('./output.log', 'a') as file:
+                file.write(f'peer port:{self.my_peer.address[1]}, loss: {round(float(loss.detach()),3)}, ACCURACY ": {round(acc,2)}, '
+              f'ACCURACY_AVG: {round(self.accuracies_avg,2)}')
+        loss.backward()
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+
+
+
+
+
+    def get_querynres(self):
+        self.row = np.random.randint(0, self.df.shape[0])
+        # print ('ROW NUMBER: ', self.row)
+        query = self.df.iloc[self.row]['query']
+        # selected_res = docs[docs == self.df.iloc[self.row]['doc_id']].index[0]
+        selected_res = self.df.iloc[self.row]['doc_id']
+        self.row += 1
+        return query, selected_res
 
     def started(self) -> None:
         print('Indexing (please wait)...')
-        self.ltr = LTR(cfg, args.device)
 
-        if args.simulation:
-            print(cfg)
-            print(fmt('Enter query for simulation', 'yellow'))
-            query = input(f"\r{fmt('QUERY', 'purple')}: ")
+        # Load model and tokenizer
+        self.model = T5ForConditionalGeneration.from_pretrained(model_name).to(device)
+        self.tokenizer = T5Tokenizer.from_pretrained(model_name)
+        self.optimizer = AdamW(self.model.parameters(), lr=1e-3)
 
-            print(fmt('Consecutively select results for simulation from best to worst', 'yellow'))
+        # Training loop
+        self.model.train()
 
-            ranked_result_ids = [] # selected results ordered by rank (best to worst)
-            results = self.ltr.query(query)
-            remaining_results = results.copy()
+        self.network.add_peer_observer(self)
+        print(self.get_peers())
 
-            for rank in range(len(results)):
-                selected_res = None
-                while selected_res is None:
-                    terminal_menu = TerminalMenu(remaining_results.values())
-                    selected_res = terminal_menu.show()
 
-                selected_id, selected_title = list(remaining_results.items())[selected_res]
-                print(fmt(f'#{rank+1}', 'blue') + f': {selected_title}')
-                ranked_result_ids.append(selected_id)
-                remaining_results.pop(selected_id)
+        async def start_communication() -> None:
+            print(f'running comms routine with {len(self.get_peers())} peers')
+            if len(self.get_peers()) > 0:
+                # if not self.lamport_clock:
+                query, selected_res = self.get_querynres()
+                print('starting comms & ending comms')
+                self.cancel_pending_task("start_communication")
 
-            # For result #1, e.g., simulate sim_epochs=100 clicks; for result #2, simulate 90 clicks; etc.
-            sim_epochs = int(input(f"\r{fmt('Number of epochs on #1 (e.g., 1000)', 'yellow')}: "))
-            sim_epoch_diff = int(input(f"\r{fmt('Deduction per rank (e.g., 100)', 'yellow')}: "))
-            clicks = [] # list of clicked result indices
-            for i in range(len(ranked_result_ids)):
-                if sim_epoch_diff <= 0: break
-                clicks.extend([i] * (sim_epochs - i*sim_epoch_diff))
-            random.shuffle(clicks)
 
-            print(fmt(f'Training model on simulation ({len(clicks) * cfg.epoch_scale} epochs)...', 'gray'))
-            with silence():
-                for i in clicks:
-                    self.ltr.train(self.ltr.gen_train_data(query, ranked_result_ids, i))
-            
-            inferred_ranking = list(self.ltr.query(query).keys())
-            print(fmt(f'nDCG: {round(ndcg(ranked_result_ids, inferred_ranking), 3)}', 'yellow'))
 
-        async def app() -> None:
-            threading.Thread(target=self.input_thread, daemon=True).start()
+                p = random.choice(self.get_peers())
+                self.ez_send(p, Query_res(query=query, result=selected_res))
+            else:
+                print('gonna try again')
+                pass
 
-            while True:
-                self.ready_for_input.set()
-                while self.input_queue.empty():
-                    await sleep(0.1)
+        async def send_query() -> None:
+            if len(self.get_peers()) == 0:
+                return None
+            new_query, new_res = self.get_querynres()
+            if len(self.current_queries) == 0:
+                for i in range ( round(batch_size/len(self.get_peers())) ):
+                    new_query, new_res = self.get_querynres()
+                    self.current_queries.append(new_query)
+                    self.current_docs.append(new_res)
 
-                query = self.input_queue.get()
-                results = self.ltr.query(query)
+            p = random.choice(self.get_peers())
 
-                terminal_menu = TerminalMenu(results.values())
-                selected_res = terminal_menu.show()
-                if selected_res is None: continue
-                print(f"{fmt('RESULT', 'blue')}:", list(results.values())[selected_res])
-                await sleep(0)
+            self.check_batch_size_and_train()
+            self.ez_send(p, Query_res(query=new_query, result=new_res))
 
-                self.ltr.on_result_selected(query, list(results.keys()), selected_res)
-                model_bf = self.ltr.serialize_model()
-                chunks = split(model_bf, 8192)
-                for peer in self.get_peers():
-                    _id = os.urandom(16)
-                    print(fmt(f'Sending update (packet 0/{len(chunks)})', 'gray'), end='')
-                    for i, chunk in enumerate(chunks):
-                        print(fmt(f'\rSending update (packet {i+1}/{len(chunks)})', 'gray'), end='')
-                        self.ez_send(peer, UpdateModel(_id, i+1, len(chunks), chunk))
-                        time.sleep(0.01)
-                    print()
+        self.register_task("start_communication", start_communication, interval=5.0, delay=0)
+        self.register_task("send_random_q_d_pair", send_query, interval=0.01, delay=0)
+    def check_batch_size_and_train(self):
+        if len(self.current_queries)>=batch_size:
+            self.train_model(self.current_queries, self.current_docs)
+            self.current_queries = []
+            self.current_docs = []
 
-        self.register_task("app", app, delay=0)
+    def change_df(self, df_changer):
+            self.df = df_changer.copy()
+            self.got_here = True
 
-    @lazy_wrapper(UpdateModel)
-    def on_message(self, peer: Peer, payload: UpdateModel) -> None:
-        self.packets.append(payload)
-        packets = [x for x in self.packets if x.id == payload.id]
-        if len(packets) == payload.total:
-            model_bf = io.BytesIO()
-            for packet in sorted(packets, key=lambda x: x.fragment):
-                model_bf.write(packet.data)
-            self.packets = list(filter(lambda x: x.id != payload.id, self.packets))
-            model_bf.seek(0)
-            model = torch.load(model_bf)
-            self.ltr.apply_updates(model)
+    @lazy_wrapper(Query_res)
+    def on_message(self, peer: Peer, payload: Query_res) -> None:
+
+        self.current_queries.append(payload.query)
+        self.current_docs.append(payload.result)
+        self.check_batch_size_and_train()
+
+
+
 
 async def start_communities() -> None:
-    builder = ConfigBuilder().clear_keys().clear_overlays()
-    builder.add_key("my peer", "medium", f"certs/ec{args.id}.pem")
-    builder.add_overlay("LTRCommunity", "my peer",
-                        [WalkerDefinition(Strategy.RandomWalk, 10, {'timeout': 3.0})],
-                        default_bootstrap_defs, {}, [('started',)])
-    await IPv8(builder.finalize(),
-                extra_communities={'LTRCommunity': LTRCommunity}).start()
+    for i in range(peer_nbr):
+        builder = ConfigBuilder().clear_keys().clear_overlays()
+        builder.add_key("my peer", "medium", f"certs/ec{i}.pem")
+        builder.add_overlay("LTRCommunity", "my peer",
+                            [WalkerDefinition(Strategy.RandomWalk, 10, {'timeout': 3.0})],
+                            default_bootstrap_defs, {}, [('started',)])
+        await IPv8(builder.finalize(),
+                   extra_communities={'LTRCommunity': LTRCommunity}).start()
     await run_forever()
 
 
-parser = argparse.ArgumentParser(prog='Peer-to-Peer Online Learning-to-Rank')
-parser.add_argument('id', help='identity of this peer')
-parser.add_argument('-s', '--simulation', action='store_true', help='perform simulation of user clicks on a set query')
-parser.add_argument('--device', type=str, default='cpu', choices=['cpu', 'cuda', 'mps'], help='specify the device to use')
-args = parser.parse_args()
 
-cfgParser = ConfigParser()
-cfgParser.read('config.ini')
-cfg = Config(cfgParser['DEFAULT'])
 
-try:
-    run(start_communities())
-except KeyboardInterrupt:
-    print('\nProgram terminated by user.')
-    try:
-        sys.exit(130)
-    except SystemExit:
-        os._exit(130)
+start_time = time()
+print (start_time)
+all_docs_till_now = []
+
+df = pd.read_csv('./orcas.tsv', sep='\t', header=None,
+                 names=['query_id', 'query', 'doc_id', 'doc'])
+
+
+def find_shard_folders(directory):
+    """
+    List all folders within a given directory that have 'X' in their name.
+
+    :param directory: The root directory to search within.
+    :return: A list of paths to folders that contain 'X' in their name.
+    """
+    folders = []
+    for root, dirs, files in os.walk(directory):
+        # Filter directories in the current root that contain 'X'
+        matched_dirs = [os.path.join(root, d) for d in dirs if 'group' in d]
+        folders.extend(matched_dirs)
+
+    return folders
+previous_shards = find_shard_folders('aggregated_results')
+print (previous_shards)
+for s in previous_shards:
+    prev_docs = pd.read_csv(f'{s}/datasets/train_df.csv')['doc_id'].unique()
+    all_docs_till_now.extend(list(prev_docs))
+    print ('docs till now', len(all_docs_till_now))
+df = df[~df['doc_id'].isin(all_docs_till_now)]
+
+root_folder_for_shard = f'group{shard}'
+os.makedirs(f'aggregated_results/{root_folder_for_shard}/datasets', exist_ok=True)
+os.makedirs(f'aggregated_results/{root_folder_for_shard}/models', exist_ok=True)
+os.makedirs(f'aggregated_results/{root_folder_for_shard}/accuracies', exist_ok=True)
+os.makedirs(f'aggregated_results/{root_folder_for_shard}/losses', exist_ok=True)
+cnter = df.groupby('doc_id').count().sort_values('query',ascending = False) # get most referenced docs subset
+cnter = cnter[cnter['query']>=2] # remove docs that are referenced only once to make stratify work
+docs_to_be_used = cnter.sample(total_doc_count).reset_index()
+df = df[df['doc_id'].isin(list(docs_to_be_used['doc_id']))]
+
+
+with open('./output.log', 'a') as file:
+                file.write(' doc nbr:' + str(docs_to_be_used.shape[0]) + ' shape:' + str(df.shape[0]))
+
+train_df, test_df = train_test_split(df, test_size=0.5, random_state=42, stratify=df['doc_id']) # split into train and test
+train_df.to_csv(f'aggregated_results/{root_folder_for_shard}/datasets/train_df.csv')
+test_df.to_csv(f'aggregated_results/{root_folder_for_shard}/datasets/test_df.csv')
+
+df = train_df.copy()
+run(start_communities())
